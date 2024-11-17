@@ -3,9 +3,9 @@
 # SPDX-License-Identifier: Apache-2.0
 
 EXTENSION_PREFIX            := gardener-extension
-NAME                        := mwe
-REGISTRY                    := eu.gcr.io/gardener-project/gardener
-IMAGE_PREFIX                := $(REGISTRY)/extensions
+NAME                        := private-network
+REGISTRY                    := registry.fke.fptcloud.com
+IMAGE_PREFIX                := $(REGISTRY)/762c8029-26d9-4bea-b461-989ee4d4890f
 REPO_ROOT                   := $(shell dirname $(realpath $(lastword $(MAKEFILE_LIST))))
 HACK_DIR                    := $(REPO_ROOT)/hack
 VERSION                     := $(shell cat "$(REPO_ROOT)/VERSION")
@@ -55,8 +55,13 @@ docker-login:
 
 .PHONY: docker-images
 docker-images:
-	@docker build -t $(IMAGE_PREFIX)/$(NAME):$(VERSION) -t $(IMAGE_PREFIX)/$(NAME):latest -f Dockerfile -m 6g --target $(EXTENSION_PREFIX)-$(NAME) .
+	@docker build -t $(IMAGE_PREFIX)/$(EXTENSION_PREFIX)-$(NAME):$(VERSION)           -t $(IMAGE_PREFIX)/$(EXTENSION_PREFIX)-$(NAME):latest           -f Dockerfile -m 6g --target $(EXTENSION_PREFIX)-$(NAME)           .
 
+
+.PHONY: docker-push
+docker-push:
+	@docker push $(IMAGE_PREFIX)/$(EXTENSION_PREFIX)-$(NAME):$(VERSION)
+	
 #####################################################################
 # Rules for verification, formatting, linting, testing and cleaning #
 #####################################################################
