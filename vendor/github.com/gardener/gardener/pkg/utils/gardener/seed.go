@@ -1,4 +1,4 @@
-// Copyright (c) 2021 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2021 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,14 +15,23 @@
 package gardener
 
 import (
+	"context"
 	"crypto/x509"
 	"fmt"
 	"reflect"
 	"strings"
 
 	certificatesv1 "k8s.io/api/certificates/v1"
+	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
+	"github.com/gardener/gardener/pkg/apis/core/v1beta1/helper"
+	operatorv1alpha1 "github.com/gardener/gardener/pkg/apis/operator/v1alpha1"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
+	"github.com/gardener/gardener/pkg/utils/version"
 )
 
 const (
@@ -92,4 +101,64 @@ func hasExactUsages(usages, requiredUsages []certificatesv1.KeyUsage) bool {
 	}
 
 	return true
+}
+
+// ComputeNginxIngressClassForSeed returns the IngressClass for the Nginx Ingress controller.
+func ComputeNginxIngressClassForSeed(seed *gardencorev1beta1.Seed, kubernetesVersion *string) (string, error) {
+	if kubernetesVersion == nil {
+		return "", fmt.Errorf("kubernetes version is missing for seed %q", seed.Name)
+	}
+
+	// We need to use `versionutils.CompareVersions` because this function normalizes the seed version first.
+	// This is especially necessary if the seed cluster is a non Gardener managed cluster and thus might have some
+	// custom version suffix.
+	greaterEqual122, err := version.CompareVersions(*kubernetesVersion, ">=", "1.22")
+	if err != nil {
+		return "", err
+	}
+
+	if managed := helper.SeedWantsManagedIngress(seed); managed {
+		if greaterEqual122 {
+			return v1beta1constants.SeedNginxIngressClass122, nil
+		} else {
+			return v1beta1constants.SeedNginxIngressClass, nil
+		}
+	}
+
+	return v1beta1constants.NginxIngressClass, nil
+}
+
+// GetWildcardCertificate gets the wildcard certificate for the seed's ingress domain.
+// Nil is returned if no wildcard certificate is configured.
+func GetWildcardCertificate(ctx context.Context, c client.Client) (*corev1.Secret, error) {
+	wildcardCerts := &corev1.SecretList{}
+	if err := c.List(
+		ctx,
+		wildcardCerts,
+		client.InNamespace(v1beta1constants.GardenNamespace),
+		client.MatchingLabels{v1beta1constants.GardenRole: v1beta1constants.GardenRoleControlPlaneWildcardCert},
+	); err != nil {
+		return nil, err
+	}
+
+	if len(wildcardCerts.Items) > 1 {
+		return nil, fmt.Errorf("misconfigured seed cluster: not possible to provide more than one secret with annotation %s", v1beta1constants.GardenRoleControlPlaneWildcardCert)
+	}
+
+	if len(wildcardCerts.Items) == 1 {
+		return &wildcardCerts.Items[0], nil
+	}
+	return nil, nil
+}
+
+// SeedIsGarden returns 'true' if the cluster is registered as a Garden cluster.
+func SeedIsGarden(ctx context.Context, seedClient client.Client) (bool, error) {
+	seedIsGarden, err := kubernetesutils.ResourcesExist(ctx, seedClient, operatorv1alpha1.SchemeGroupVersion.WithKind("GardenList"))
+	if err != nil {
+		if !meta.IsNoMatchError(err) {
+			return false, err
+		}
+		seedIsGarden = false
+	}
+	return seedIsGarden, nil
 }

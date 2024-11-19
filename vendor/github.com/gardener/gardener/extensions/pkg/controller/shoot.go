@@ -1,4 +1,4 @@
-// Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2019 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -35,7 +35,7 @@ func (f ChartRendererFactoryFunc) NewChartRendererForShoot(version string) (char
 
 // GetPodNetwork returns the pod network CIDR of the given Shoot.
 func GetPodNetwork(cluster *Cluster) string {
-	if cluster.Shoot.Spec.Networking.Pods != nil {
+	if cluster.Shoot.Spec.Networking != nil && cluster.Shoot.Spec.Networking.Pods != nil {
 		return *cluster.Shoot.Spec.Networking.Pods
 	}
 	return ""
@@ -43,15 +43,30 @@ func GetPodNetwork(cluster *Cluster) string {
 
 // GetServiceNetwork returns the service network CIDR of the given Shoot.
 func GetServiceNetwork(cluster *Cluster) string {
-	if cluster.Shoot.Spec.Networking.Services != nil {
+	if cluster.Shoot.Spec.Networking != nil && cluster.Shoot.Spec.Networking.Services != nil {
 		return *cluster.Shoot.Spec.Networking.Services
 	}
 	return ""
 }
 
-// IsHibernated returns true if the shoot is hibernated, or false otherwise.
-func IsHibernated(cluster *Cluster) bool {
+// IsHibernationEnabled returns true if the shoot is marked for hibernation, or false otherwise.
+func IsHibernationEnabled(cluster *Cluster) bool {
 	return cluster.Shoot.Spec.Hibernation != nil && cluster.Shoot.Spec.Hibernation.Enabled != nil && *cluster.Shoot.Spec.Hibernation.Enabled
+}
+
+// IsHibernated returns true if shoot spec indicates that it is marked for hibernation and its status indicates that the hibernation is complete or false otherwise
+func IsHibernated(cluster *Cluster) bool {
+	return IsHibernationEnabled(cluster) && cluster.Shoot.Status.IsHibernated
+}
+
+// IsHibernatingOrWakingUp returns true if the cluster either wakes up from hibernation or is going into hibernation but not yet hibernated
+func IsHibernatingOrWakingUp(cluster *Cluster) bool {
+	return IsHibernationEnabled(cluster) != cluster.Shoot.Status.IsHibernated
+}
+
+// IsCreationInProcess returns true if the cluster is in the process of getting created, false otherwise
+func IsCreationInProcess(cluster *Cluster) bool {
+	return cluster.Shoot.Status.LastOperation == nil || cluster.Shoot.Status.LastOperation.Type == gardencorev1beta1.LastOperationTypeCreate
 }
 
 // IsFailed returns true if the embedded shoot is failed, or false otherwise.
@@ -79,7 +94,7 @@ func IsUnmanagedDNSProvider(cluster *Cluster) bool {
 
 // GetReplicas returns the woken up replicas of the given Shoot.
 func GetReplicas(cluster *Cluster, wokenUp int) int {
-	if IsHibernated(cluster) {
+	if IsHibernationEnabled(cluster) {
 		return 0
 	}
 	return wokenUp
@@ -88,7 +103,7 @@ func GetReplicas(cluster *Cluster, wokenUp int) int {
 // GetControlPlaneReplicas returns the woken up replicas for controlplane components of the given Shoot
 // that should only be scaled down at the end of the flow.
 func GetControlPlaneReplicas(cluster *Cluster, scaledDown bool, wokenUp int) int {
-	if cluster.Shoot != nil && cluster.Shoot.DeletionTimestamp == nil && IsHibernated(cluster) && scaledDown {
+	if cluster.Shoot != nil && cluster.Shoot.DeletionTimestamp == nil && IsHibernationEnabled(cluster) && scaledDown {
 		return 0
 	}
 	return wokenUp

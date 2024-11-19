@@ -5,17 +5,23 @@
 package lifecycle
 
 import (
-	"time"
-
 	"github.com/gardener/gardener/extensions/pkg/controller/extension"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
-// DefaultAddOptions contains configuration for the private-network controller
-var DefaultAddOptions = AddOptions{}
+const (
+	// Type is the type of Extension resource.
+	Type   = "private-network"
+	Suffix = "-extension-service"
+)
 
-// AddOptions are options to apply when adding the private-network controller to the manager.
+var (
+	// DefaultAddOptions are the default AddOptions for AddToManager.
+	DefaultAddOptions = AddOptions{}
+)
+
+// AddOptions are options to apply when adding the shoot service controller to the manager.
 type AddOptions struct {
 	// ControllerOptions contains options for the controller.
 	ControllerOptions controller.Options
@@ -23,15 +29,21 @@ type AddOptions struct {
 	IgnoreOperationAnnotation bool
 }
 
-// AddToManager adds a private-network Lifecycle controller to the given Controller Manager.
+// AddToManager adds a controller with the default Options to the given Controller Manager.
 func AddToManager(mgr manager.Manager) error {
+	return AddToManagerWithOptions(mgr, &DefaultAddOptions)
+}
+
+// AddToManagerWithOptions adds a controller with the given Options to the given manager.
+// The opts.Reconciler is being set with a newly instantiated actuator.
+func AddToManagerWithOptions(mgr manager.Manager, opts *AddOptions) error {
 	return extension.Add(mgr, extension.AddArgs{
-		Actuator:          NewActuator(),
-		ControllerOptions: DefaultAddOptions.ControllerOptions,
-		Name:              "private-network_lifecycle_controller",
-		FinalizerSuffix:   "private-network",
-		Resync:            60 * time.Minute,
+		Actuator:          NewActuator(mgr),
+		ControllerOptions: opts.ControllerOptions,
+		Name:              Type + Suffix,
+		FinalizerSuffix:   Type + Suffix,
+		Resync:            0,
 		Predicates:        extension.DefaultPredicates(DefaultAddOptions.IgnoreOperationAnnotation),
-		Type:              "private-network",
+		Type:              Type,
 	})
 }

@@ -1,4 +1,4 @@
-// Copyright (c) 2020 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2020 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -54,11 +54,11 @@ func (v withValue) MutateDeleteOptions(opts *DeleteOptions) {
 
 // MergeFuncs can be used modify the default merge functions for ApplyOptions:
 //
-// Apply(ctx, "chart", "my-ns", "my-release", MergeFuncs{
-// 		corev1.SchemeGroupVersion.WithKind("Service").GroupKind(): func(newObj, oldObj *unstructured.Unstructured) {
-// 			newObj.SetAnnotations(map[string]string{"foo":"bar"})
-// 		}
-// })
+//	Apply(ctx, "chart", "my-ns", "my-release", MergeFuncs{
+//			corev1.SchemeGroupVersion.WithKind("Service").GroupKind(): func(newObj, oldObj *unstructured.Unstructured) {
+//				newObj.SetAnnotations(map[string]string{"foo":"bar"})
+//			}
+//	})
 type MergeFuncs map[schema.GroupKind]MergeFunc
 
 // MutateApplyOptions applies this configuration to the given apply options.

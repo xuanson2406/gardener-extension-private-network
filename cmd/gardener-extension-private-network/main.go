@@ -9,13 +9,16 @@ import (
 
 	"github.com/gardener/gardener-extension-private-network/cmd/gardener-extension-private-network/app"
 
+	"github.com/gardener/gardener/cmd/utils"
 	"github.com/gardener/gardener/pkg/logger"
-	runtimelog "sigs.k8s.io/controller-runtime/pkg/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager/signals"
 )
 
 func main() {
-	runtimelog.SetLogger(logger.ZapLogger(false))
+	utils.DeduplicateWarnings()
+
+	logf.SetLogger(logger.MustNewZapLogger(logger.InfoLevel, logger.FormatJSON))
 
 	ctx := signals.SetupSignalHandler()
 	if err := app.NewServiceControllerCommand().ExecuteContext(ctx); err != nil {

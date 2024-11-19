@@ -1,4 +1,4 @@
-// Copyright (c) 2021 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2021 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -20,8 +20,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gardener/gardener/pkg/utils"
-
 	appsv1 "k8s.io/api/apps/v1"
 	appsv1beta1 "k8s.io/api/apps/v1beta1"
 	appsv1beta2 "k8s.io/api/apps/v1beta2"
@@ -29,6 +27,8 @@ import (
 	batchv1beta1 "k8s.io/api/batch/v1beta1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+
+	"github.com/gardener/gardener/pkg/utils"
 )
 
 const (
@@ -186,6 +186,18 @@ func computeAnnotations(spec corev1.PodSpec, additional ...string) map[string]st
 
 		if volume.ConfigMap != nil {
 			out[AnnotationKey(KindConfigMap, volume.ConfigMap.Name)] = volume.ConfigMap.Name
+		}
+
+		if volume.Projected != nil {
+			for _, source := range volume.Projected.Sources {
+				if source.Secret != nil {
+					out[AnnotationKey(KindSecret, source.Secret.Name)] = source.Secret.Name
+				}
+
+				if source.ConfigMap != nil {
+					out[AnnotationKey(KindConfigMap, source.ConfigMap.Name)] = source.ConfigMap.Name
+				}
+			}
 		}
 	}
 

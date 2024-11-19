@@ -1,4 +1,4 @@
-// Copyright (c) 2018 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2018 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -133,11 +133,11 @@ func EncodeSHA1(in []byte) string {
 	return EncodeBase64(SHA1(in))
 }
 
-// CreateSHA1Secret takes a username and a password and returns a sha1-schemed credentials pair as string.
-func CreateSHA1Secret(username, password []byte) string {
-	credentials := append([]byte(username), ":{SHA}"...)
+// CreateSHA1Secret takes a username and a password and returns a sha1-schemed credentials pair as bytes.
+func CreateSHA1Secret(username, password []byte) []byte {
+	credentials := append(username, ":{SHA}"...)
 	credentials = append(credentials, EncodeSHA1(password)...)
-	return EncodeBase64(credentials)
+	return credentials
 }
 
 // ComputeSHA1Hex computes the hexadecimal representation of the SHA1 hash of the given input byte

@@ -1,4 +1,4 @@
-// Copyright (c) 2020 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2020 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -15,60 +15,43 @@
 package kubernetes
 
 import (
-	"context"
 	"fmt"
 	"time"
 
-	kcache "github.com/gardener/gardener/pkg/client/kubernetes/cache"
-	"github.com/gardener/gardener/pkg/logger"
-
+	"github.com/go-logr/logr"
 	"golang.org/x/time/rate"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/rest"
+	"k8s.io/utils/clock"
+	"k8s.io/utils/pointer"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
-	"sigs.k8s.io/controller-runtime/pkg/cluster"
+
+	kubernetescache "github.com/gardener/gardener/pkg/client/kubernetes/cache"
 )
 
 const (
 	defaultCacheResyncPeriod = 6 * time.Hour
 )
 
-// NewRuntimeClientWithCache creates a new client.client with the given config and options.
-// The client uses a new cache, which will be started immediately using the given context.
-func NewRuntimeClientWithCache(ctx context.Context, config *rest.Config, options client.Options, uncachedObjects ...client.Object) (client.Client, error) {
-	if err := setClientOptionsDefaults(config, &options); err != nil {
+// NewRuntimeCache creates a new cache.Cache with the given config and options. It can be used
+// for creating new controller-runtime clients with caches.
+func NewRuntimeCache(config *rest.Config, options cache.Options) (cache.Cache, error) {
+	if err := setCacheOptionsDefaults(&options); err != nil {
 		return nil, err
 	}
 
-	clientCache, err := NewRuntimeCache(config, cache.Options{
-		Scheme: options.Scheme,
-		Mapper: options.Mapper,
-	})
-	if err != nil {
-		return nil, fmt.Errorf("could not create new client cache: %w", err)
-	}
-
-	runtimeClient, err := newRuntimeClientWithCache(config, options, clientCache, uncachedObjects...)
-	if err != nil {
-		return nil, err
-	}
-
-	go func() {
-		if err := clientCache.Start(ctx); err != nil {
-			logger.NewLogger(logger.ErrorLevel, "").Errorf("cache.Start returned error, which should never happen, ignoring.")
-		}
-	}()
-
-	clientCache.WaitForCacheSync(ctx)
-
-	return runtimeClient, nil
+	return cache.New(config, options)
 }
 
-func newRuntimeClientWithCache(config *rest.Config, options client.Options, cache cache.Cache, uncachedObjects ...client.Object) (client.Client, error) {
-	return cluster.DefaultNewClient(cache, config, options, uncachedObjects...)
+func setCacheOptionsDefaults(options *cache.Options) error {
+	if options.Resync == nil {
+		options.Resync = pointer.Duration(defaultCacheResyncPeriod)
+	}
+
+	return nil
 }
 
 func setClientOptionsDefaults(config *rest.Config, options *client.Options) error {
@@ -115,25 +98,22 @@ func AggregatorCacheFunc(newCache cache.NewCacheFunc, typeToNewCache map[client.
 			gvkToCache[gvk] = cache
 		}
 
-		return kcache.NewAggregator(fallbackCache, gvkToCache, scheme), nil
+		return kubernetescache.NewAggregator(fallbackCache, gvkToCache, scheme), nil
 	}
 }
 
-// NewRuntimeCache creates a new cache.Cache with the given config and options. It can be used
-// for creating new controller-runtime clients with caches.
-func NewRuntimeCache(config *rest.Config, options cache.Options) (cache.Cache, error) {
-	if err := setCacheOptionsDefaults(&options); err != nil {
-		return nil, err
+// SingleObjectCacheFunc returns a cache.NewCacheFunc for the SingleObject implementation.
+func SingleObjectCacheFunc(log logr.Logger, scheme *runtime.Scheme, obj client.Object) cache.NewCacheFunc {
+	return func(restConfig *rest.Config, options cache.Options) (cache.Cache, error) {
+		gvk, err := apiutil.GVKForObject(obj, scheme)
+		if err != nil {
+			return nil, err
+		}
+
+		logger := log.
+			WithName("single-object-cache").
+			WithValues("groupVersion", gvk.GroupVersion().String(), "kind", gvk.Kind)
+
+		return kubernetescache.NewSingleObject(logger, restConfig, cache.New, options, gvk, clock.RealClock{}, 10*time.Minute, time.Minute), nil
 	}
-
-	return cache.New(config, options)
-}
-
-func setCacheOptionsDefaults(options *cache.Options) error {
-	if options.Resync == nil {
-		resync := defaultCacheResyncPeriod
-		options.Resync = &resync
-	}
-
-	return nil
 }

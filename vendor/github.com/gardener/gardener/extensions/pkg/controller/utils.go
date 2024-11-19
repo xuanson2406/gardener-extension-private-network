@@ -1,4 +1,4 @@
-// Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2019 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -18,24 +18,22 @@ import (
 	"context"
 	"fmt"
 	"reflect"
-	"strings"
+
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	vpaautoscalingv1 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1"
+	"k8s.io/client-go/kubernetes/scheme"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/manager"
 
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	resourcesv1alpha1 "github.com/gardener/gardener/pkg/apis/resources/v1alpha1"
-	kutil "github.com/gardener/gardener/pkg/utils/kubernetes"
-
-	"github.com/Masterminds/semver"
-	autoscalingv1 "k8s.io/api/autoscaling/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
-	autoscalingv1beta2 "k8s.io/autoscaler/vertical-pod-autoscaler/pkg/apis/autoscaling.k8s.io/v1beta2"
-	"k8s.io/client-go/kubernetes/scheme"
-	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller"
-	"sigs.k8s.io/controller-runtime/pkg/manager"
+	kubernetesutils "github.com/gardener/gardener/pkg/utils/kubernetes"
 )
 
 var (
@@ -84,7 +82,7 @@ func (a *AddToManagerBuilder) AddToManager(m manager.Manager) error {
 }
 
 // GetSecretByReference returns the Secret object matching the given SecretReference.
-var GetSecretByReference = kutil.GetSecretByReference
+var GetSecretByReference = kubernetesutils.GetSecretByReference
 
 // WatchBuilder holds various functions which add watch controls to the passed Controller.
 type WatchBuilder []func(controller.Controller) error
@@ -123,10 +121,10 @@ func UnsafeGuessKind(obj runtime.Object) string {
 	return t.Elem().Name()
 }
 
-// GetVerticalPodAutoscalerObject returns unstructured.Unstructured representing autoscalingv1beta2.VerticalPodAutoscaler
+// GetVerticalPodAutoscalerObject returns unstructured.Unstructured representing vpaautoscalingv1.VerticalPodAutoscaler
 func GetVerticalPodAutoscalerObject() *unstructured.Unstructured {
 	obj := &unstructured.Unstructured{}
-	obj.SetAPIVersion(autoscalingv1beta2.SchemeGroupVersion.String())
+	obj.SetAPIVersion(vpaautoscalingv1.SchemeGroupVersion.String())
 	obj.SetKind("VerticalPodAutoscaler")
 	return obj
 }
@@ -161,57 +159,20 @@ func GetObjectByReference(ctx context.Context, c client.Client, ref *autoscaling
 	return c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: v1beta1constants.ReferencedResourcesPrefix + ref.Name}, obj)
 }
 
-var (
-	versionConstraintGreaterEqual136 *semver.Constraints
-	versionConstraintGreaterEqual137 *semver.Constraints
-)
-
-func init() {
-	var err error
-
-	versionConstraintGreaterEqual136, err = semver.NewConstraint(">= 1.36")
-	utilruntime.Must(err)
-	versionConstraintGreaterEqual137, err = semver.NewConstraint(">= 1.37")
-	utilruntime.Must(err)
-}
-
-func parseGardenerVersion(version string) (*semver.Version, error) {
-	v := version
-	if idx := strings.Index(v, "-"); idx >= 0 {
-		v = version[:idx]
-	}
-
-	return semver.NewVersion(v)
-}
-
 // UseTokenRequestor returns true when the provided Gardener version is large enough for supporting acquiring tokens
 // for shoot cluster control plane components running in the seed based on the TokenRequestor controller of
 // gardener-resource-manager (https://github.com/gardener/gardener/blob/master/docs/concepts/resource-manager.md#tokenrequestor).
+// Deprecated: new extension versions need to require at least Gardener version v1.36 and use the token requestor by
+// default which makes this function obsolete.
 func UseTokenRequestor(gardenerVersion string) (bool, error) {
-	if gardenerVersion == "" {
-		return false, nil
-	}
-
-	gv, err := parseGardenerVersion(gardenerVersion)
-	if err != nil {
-		return false, fmt.Errorf("could not parse Gardener version: %w", err)
-	}
-
-	return versionConstraintGreaterEqual136.Check(gv), nil
+	return true, nil
 }
 
 // UseServiceAccountTokenVolumeProjection returns true when the provided Gardener version is large enough for supporting
 // automatic token volume projection for components running in the seed and shoot clusters based on the respective
 // webhook part of gardener-resource-manager (https://github.com/gardener/gardener/blob/master/docs/concepts/resource-manager.md#auto-mounting-projected-serviceaccount-tokens).
+// Deprecated: new extension versions need to require at least Gardener version v1.37 and use projected service account
+// token volumes by default which makes this function obsolete.
 func UseServiceAccountTokenVolumeProjection(gardenerVersion string) (bool, error) {
-	if gardenerVersion == "" {
-		return false, nil
-	}
-
-	gv, err := parseGardenerVersion(gardenerVersion)
-	if err != nil {
-		return false, fmt.Errorf("could not parse Gardener version: %w", err)
-	}
-
-	return versionConstraintGreaterEqual137.Check(gv), nil
+	return true, nil
 }

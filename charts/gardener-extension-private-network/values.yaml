@@ -7,6 +7,7 @@ image:
   repository: registry.fke.fptcloud.com/762c8029-26d9-4bea-b461-989ee4d4890f/gardener-extension-private-network
   tag: latest
   pullPolicy: IfNotPresent
+  imagePullSecrets: regcred
 
 serviceName: private-network
 replicaCount: 1

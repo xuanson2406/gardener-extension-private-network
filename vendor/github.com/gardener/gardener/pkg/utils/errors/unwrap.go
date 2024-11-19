@@ -1,4 +1,4 @@
-// Copyright (c) 2021 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2021 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,29 +16,17 @@ package errors
 
 import "errors"
 
-type causer interface {
-	Cause() error
-}
-
-// Unwrap unwraps and returns the root error. Multiple wrappings either via `fmt.Errorf` or via `causer` implementations are properly taken into account.
+// Unwrap unwraps and returns the root error. Multiple wrappings via `fmt.Errorf` implementations are properly taken into account.
 func Unwrap(err error) error {
-	var cdone, udone bool
+	var done bool
 
-	for !(udone && cdone) {
+	for !done {
 		if err == nil || errors.Unwrap(err) == nil {
 			// this most likely is the root error
-			udone = true
+			done = true
 		} else {
 			err = errors.Unwrap(err)
-			udone = false
-		}
-
-		if cause, ok := err.(causer); !ok {
-			// this most likely is the root cause error
-			cdone = true
-		} else {
-			err = cause.Cause()
-			cdone = false
+			done = false
 		}
 	}
 

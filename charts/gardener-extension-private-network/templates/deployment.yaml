@@ -29,6 +29,8 @@ spec:
         app.kubernetes.io/name: gardener-extension-{{ .Values.serviceName }}
         app.kubernetes.io/instance: {{ .Release.Name }}
     spec:
+      imagePullSecrets:
+      - name: {{ .Values.image.imagePullSecrets }}
       {{- if gt (int .Values.replicaCount) 1 }}
       affinity:
         podAntiAffinity:
@@ -45,7 +47,7 @@ spec:
                 - {{ .Release.Name }}
             topologyKey: "kubernetes.io/hostname"
       {{- end }}
-      priorityClassName: gardener-extension-{{ .Values.serviceName }}
+      priorityClassName: gardener-system-900
       serviceAccountName: gardener-extension-{{ .Values.serviceName }}
       containers:
       - name: gardener-extension-{{ .Values.serviceName }}

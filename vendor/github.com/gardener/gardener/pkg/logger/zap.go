@@ -1,4 +1,4 @@
-// Copyright (c) 2021 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2021 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -30,14 +30,14 @@ func setCommonEncoderConfigOptions(encoderConfig *zapcore.EncoderConfig) {
 }
 
 // MustNewZapLogger is like NewZapLogger but panics on invalid input.
-func MustNewZapLogger(level string, format string) logr.Logger {
-	logger, err := NewZapLogger(level, format)
+func MustNewZapLogger(level string, format string, additionalOpts ...logzap.Opts) logr.Logger {
+	logger, err := NewZapLogger(level, format, additionalOpts...)
 	utilruntime.Must(err)
 	return logger
 }
 
 // NewZapLogger creates a new logr.Logger backed by Zap.
-func NewZapLogger(level string, format string) (logr.Logger, error) {
+func NewZapLogger(level string, format string, additionalOpts ...logzap.Opts) (logr.Logger, error) {
 	var opts []logzap.Opts
 
 	// map our log levels to zap levels
@@ -64,27 +64,5 @@ func NewZapLogger(level string, format string) (logr.Logger, error) {
 		return logr.Logger{}, fmt.Errorf("invalid log format %q", format)
 	}
 
-	return logzap.New(opts...), nil
-}
-
-// ZapLogger is a Logger implementation.
-// If development is true, a Zap development config will be used
-// (stacktraces on warnings, no sampling), otherwise a Zap production
-// config will be used (stacktraces on errors, sampling).
-// Additionally, the time encoding is adjusted to `zapcore.ISO8601TimeEncoder`.
-// This is used by extensions for historical reasons.
-// TODO: consolidate this with NewZapLogger and make everything configurable in a harmonized way
-func ZapLogger(development bool) logr.Logger {
-	return logzap.New(func(o *logzap.Options) {
-		var encCfg zapcore.EncoderConfig
-		if development {
-			encCfg = zap.NewDevelopmentEncoderConfig()
-		} else {
-			encCfg = zap.NewProductionEncoderConfig()
-		}
-		setCommonEncoderConfigOptions(&encCfg)
-
-		o.Encoder = zapcore.NewJSONEncoder(encCfg)
-		o.Development = development
-	})
+	return logzap.New(append(opts, additionalOpts...)...), nil
 }

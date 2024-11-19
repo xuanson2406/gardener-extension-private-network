@@ -1,4 +1,4 @@
-// Copyright (c) 2018 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2018 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -121,6 +121,16 @@ type MachineImageVersion struct {
 	// CRI list of supported container runtime and interfaces supported by this version
 	// +optional
 	CRI []CRI `json:"cri,omitempty" protobuf:"bytes,2,rep,name=cri"`
+	// Architectures is the list of CPU architectures of the machine image in this version.
+	// +optional
+	Architectures []string `json:"architectures,omitempty" protobuf:"bytes,3,opt,name=architectures"`
+	// KubeletVersionConstraint is a constraint describing the supported kubelet versions by the machine image in this version.
+	// If the field is not specified, it is assumed that the machine image in this version supports all kubelet versions.
+	// Examples:
+	// - '>= 1.26' - supports only kubelet versions greater than or equal to 1.26
+	// - '< 1.26' - supports only kubelet versions less than 1.26
+	// +optional
+	KubeletVersionConstraint *string `json:"kubeletVersionConstraint,omitempty" protobuf:"bytes,4,opt,name=kubeletVersionConstraint"`
 }
 
 // ExpirableVersion contains a version and an expiration date.
@@ -151,6 +161,9 @@ type MachineType struct {
 	// Usable defines if the machine type can be used for shoot clusters.
 	// +optional
 	Usable *bool `json:"usable,omitempty" protobuf:"varint,6,opt,name=usable"`
+	// Architecture is the CPU architecture of this machine type.
+	// +optional
+	Architecture *string `json:"architecture,omitempty" protobuf:"bytes,7,opt,name=architecture"`
 }
 
 // MachineTypeStorage is the amount of storage associated with the root volume of this machine type.
@@ -186,7 +199,7 @@ type Region struct {
 
 // AvailabilityZone is an availability zone.
 type AvailabilityZone struct {
-	// Name is an an availability zone name.
+	// Name is an availability zone name.
 	Name string `json:"name" protobuf:"bytes,1,opt,name=name"`
 	// UnavailableMachineTypes is a list of machine type names that are not availability in this zone.
 	// +optional

@@ -1,4 +1,4 @@
-// Copyright (c) 2019 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2019 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,10 +17,8 @@ package mapper
 import (
 	"context"
 
-	"k8s.io/apimachinery/pkg/api/meta"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
-	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"github.com/go-logr/logr"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/predicate"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -28,23 +26,23 @@ import (
 
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	predicateutils "github.com/gardener/gardener/pkg/controllerutils/predicate"
-	contextutil "github.com/gardener/gardener/pkg/utils/context"
+	contextutils "github.com/gardener/gardener/pkg/utils/context"
 )
 
 type clusterToObjectMapper struct {
 	ctx            context.Context
-	client         client.Client
+	reader         cache.Cache
 	newObjListFunc func() client.ObjectList
 	predicates     []predicate.Predicate
 }
 
-func (m *clusterToObjectMapper) InjectClient(c client.Client) error {
-	m.client = c
+func (m *clusterToObjectMapper) InjectCache(c cache.Cache) error {
+	m.reader = c
 	return nil
 }
 
 func (m *clusterToObjectMapper) InjectStopChannel(stopCh <-chan struct{}) error {
-	m.ctx = contextutil.FromStopChannel(stopCh)
+	m.ctx = contextutils.FromStopChannel(stopCh)
 	return nil
 }
 
@@ -57,34 +55,20 @@ func (m *clusterToObjectMapper) InjectFunc(f inject.Func) error {
 	return nil
 }
 
-func (m *clusterToObjectMapper) Map(obj client.Object) []reconcile.Request {
+func (m *clusterToObjectMapper) Map(ctx context.Context, _ logr.Logger, reader client.Reader, obj client.Object) []reconcile.Request {
 	cluster, ok := obj.(*extensionsv1alpha1.Cluster)
 	if !ok {
 		return nil
 	}
 
 	objList := m.newObjListFunc()
-	if err := m.client.List(m.ctx, objList, client.InNamespace(cluster.Name)); err != nil {
+	if err := reader.List(ctx, objList, client.InNamespace(cluster.Name)); err != nil {
 		return nil
 	}
 
-	var requests []reconcile.Request
-
-	utilruntime.HandleError(meta.EachListItem(objList, func(obj runtime.Object) error {
-		o := obj.(client.Object)
-		if !predicateutils.EvalGeneric(o, m.predicates...) {
-			return nil
-		}
-
-		requests = append(requests, reconcile.Request{
-			NamespacedName: types.NamespacedName{
-				Namespace: o.GetNamespace(),
-				Name:      o.GetName(),
-			},
-		})
-		return nil
-	}))
-	return requests
+	return ObjectListToRequests(objList, func(o client.Object) bool {
+		return predicateutils.EvalGeneric(o, m.predicates...)
+	})
 }
 
 // ClusterToObjectMapper returns a mapper that returns requests for objects whose

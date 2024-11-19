@@ -1,4 +1,4 @@
-// Copyright (c) 2018 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2018 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,7 +19,6 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/gardener/gardener/pkg/utils"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
@@ -33,19 +32,11 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/apiutil"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
 
-	gardenercoreinstall "github.com/gardener/gardener/pkg/apis/core/install"
+	gardencoreinstall "github.com/gardener/gardener/pkg/apis/core/install"
 	seedmanagementinstall "github.com/gardener/gardener/pkg/apis/seedmanagement/install"
 	settingsinstall "github.com/gardener/gardener/pkg/apis/settings/install"
-	kcache "github.com/gardener/gardener/pkg/client/kubernetes/cache"
-	versionutils "github.com/gardener/gardener/pkg/utils/version"
-)
-
-var (
-	// UseCachedRuntimeClients is a flag for enabling cached controller-runtime clients. The CachedRuntimeClients feature
-	// gate (enabled by default sinde v1.34) causes this flag to be set to true.
-	// If enabled, the client returned by Interface.Client() will be backed by Interface.Cache(), otherwise it will talk
-	// directly to the API server.
-	UseCachedRuntimeClients = false
+	kubernetescache "github.com/gardener/gardener/pkg/client/kubernetes/cache"
+	"github.com/gardener/gardener/pkg/utils"
 )
 
 const (
@@ -68,7 +59,7 @@ const (
 func init() {
 	// enable protobuf for Gardener API for controller-runtime clients
 	protobufSchemeBuilder := runtime.NewSchemeBuilder(
-		gardenercoreinstall.AddToScheme,
+		gardencoreinstall.AddToScheme,
 		seedmanagementinstall.AddToScheme,
 		settingsinstall.AddToScheme,
 	)
@@ -240,30 +231,6 @@ func ValidateConfigWithAllowList(config clientcmdapi.Config, allowedFields []str
 	return nil
 }
 
-var supportedKubernetesVersions = []string{
-	"1.17",
-	"1.18",
-	"1.19",
-	"1.20",
-	"1.21",
-	"1.22",
-	"1.23",
-}
-
-func checkIfSupportedKubernetesVersion(gitVersion string) error {
-	for _, supportedVersion := range supportedKubernetesVersions {
-		ok, err := versionutils.CompareVersions(gitVersion, "~", supportedVersion)
-		if err != nil {
-			return err
-		}
-
-		if ok {
-			return nil
-		}
-	}
-	return fmt.Errorf("unsupported kubernetes version %q", gitVersion)
-}
-
 // NewWithConfig returns a new Kubernetes base client.
 func NewWithConfig(fns ...ConfigFunc) (Interface, error) {
 	conf := &Config{}
@@ -286,37 +253,54 @@ func newClientSet(conf *Config) (Interface, error) {
 		return nil, err
 	}
 
-	runtimeCache, err := conf.newRuntimeCache(conf.restConfig, cache.Options{
-		Scheme: conf.clientOptions.Scheme,
-		Mapper: conf.clientOptions.Mapper,
-		Resync: conf.cacheResync,
-	})
-	if err != nil {
-		return nil, err
-	}
+	var (
+		runtimeAPIReader = conf.runtimeAPIReader
+		runtimeClient    = conf.runtimeClient
+		runtimeCache     = conf.runtimeCache
+		err              error
+	)
 
-	c, err := client.New(conf.restConfig, conf.clientOptions)
-	if err != nil {
-		return nil, err
-	}
-
-	var runtimeClient client.Client
-	if UseCachedRuntimeClients && !conf.disableCache {
-		delegatingClient, err := client.NewDelegatingClient(client.NewDelegatingClientInput{
-			CacheReader:     runtimeCache,
-			Client:          c,
-			UncachedObjects: conf.uncachedObjects,
+	if runtimeCache == nil {
+		runtimeCache, err = conf.newRuntimeCache(conf.restConfig, cache.Options{
+			Scheme: conf.clientOptions.Scheme,
+			Mapper: conf.clientOptions.Mapper,
+			Resync: conf.cacheResync,
 		})
 		if err != nil {
 			return nil, err
 		}
+	}
 
-		runtimeClient = &fallbackClient{
-			Client: delegatingClient,
-			reader: c,
+	var uncachedClient client.Client
+	if runtimeAPIReader == nil || runtimeClient == nil {
+		uncachedClient, err = client.New(conf.restConfig, conf.clientOptions)
+		if err != nil {
+			return nil, err
 		}
-	} else {
-		runtimeClient = c
+	}
+
+	if runtimeAPIReader == nil {
+		runtimeAPIReader = uncachedClient
+	}
+
+	if runtimeClient == nil {
+		if conf.disableCache {
+			runtimeClient = uncachedClient
+		} else {
+			delegatingClient, err := client.NewDelegatingClient(client.NewDelegatingClientInput{
+				CacheReader:     runtimeCache,
+				Client:          uncachedClient,
+				UncachedObjects: conf.uncachedObjects,
+			})
+			if err != nil {
+				return nil, err
+			}
+
+			runtimeClient = &FallbackClient{
+				Client: delegatingClient,
+				Reader: runtimeAPIReader,
+			}
+		}
 	}
 
 	// prepare rest config with contentType defaulted to protobuf for client-go style clients that either talk to
@@ -335,7 +319,7 @@ func newClientSet(conf *Config) (Interface, error) {
 		applier: NewApplier(runtimeClient, conf.clientOptions.Mapper),
 
 		client:    runtimeClient,
-		apiReader: c,
+		apiReader: runtimeAPIReader,
 		cache:     runtimeCache,
 
 		kubernetes: kubernetes,
@@ -369,35 +353,35 @@ func defaultContentTypeProtobuf(c *rest.Config) *rest.Config {
 	return &config
 }
 
-var _ client.Client = &fallbackClient{}
+var _ client.Client = &FallbackClient{}
 
-// fallbackClient holds a `client.Reader` and `client.Reader` which is meant as a fallback
-// in case Get/List requests with the ordinary `client.Reader` fail (e.g. because of cache errors).
-type fallbackClient struct {
+// FallbackClient holds a `client.Client` and a `client.Reader` which is meant as a fallback
+// in case Get/List requests with the ordinary `client.Client` fail (e.g. because of cache errors).
+type FallbackClient struct {
 	client.Client
-	reader client.Reader
+	Reader client.Reader
 }
 
-var cacheError = &kcache.CacheError{}
+var cacheError = &kubernetescache.CacheError{}
 
 // Get retrieves an obj for a given object key from the Kubernetes Cluster.
 // In case of a cache error, the underlying API reader is used to execute the request again.
-func (d *fallbackClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object) error {
+func (d *FallbackClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 	err := d.Client.Get(ctx, key, obj)
 	if err != nil && errors.As(err, &cacheError) {
 		logf.Log.V(1).Info("Falling back to API reader because a cache error occurred", "error", err)
-		return d.reader.Get(ctx, key, obj)
+		return d.Reader.Get(ctx, key, obj)
 	}
 	return err
 }
 
 // List retrieves list of objects for a given namespace and list options.
 // In case of a cache error, the underlying API reader is used to execute the request again.
-func (d *fallbackClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+func (d *FallbackClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
 	err := d.Client.List(ctx, list, opts...)
 	if err != nil && errors.As(err, &cacheError) {
 		logf.Log.V(1).Info("Falling back to API reader because a cache error occurred", "error", err)
-		return d.reader.List(ctx, list, opts...)
+		return d.Reader.List(ctx, list, opts...)
 	}
 	return err
 }

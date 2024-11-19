@@ -1,4 +1,4 @@
-// Copyright (c) 2021 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
+// Copyright 2021 SAP SE or an SAP affiliate company. All rights reserved. This file is licensed under the Apache Software License, v. 2 except as noted otherwise in the LICENSE file
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -67,4 +67,20 @@ func CheckDaemonSet(daemonSet *appsv1.DaemonSet) error {
 	}
 
 	return nil
+}
+
+// IsDaemonSetProgressing returns false if the DaemonSet has been fully rolled out. Otherwise, it returns true along
+// with a reason, why the DaemonSet is not considered to be fully rolled out.
+func IsDaemonSetProgressing(daemonSet *appsv1.DaemonSet) (bool, string) {
+	if daemonSet.Status.ObservedGeneration < daemonSet.Generation {
+		return true, fmt.Sprintf("observed generation outdated (%d/%d)", daemonSet.Status.ObservedGeneration, daemonSet.Generation)
+	}
+
+	desiredReplicas := daemonSet.Status.DesiredNumberScheduled
+	updatedReplicas := daemonSet.Status.UpdatedNumberScheduled
+	if updatedReplicas < desiredReplicas {
+		return true, fmt.Sprintf("%d of %d replica(s) have been updated", updatedReplicas, desiredReplicas)
+	}
+
+	return false, "DaemonSet is fully rolled out"
 }
