@@ -13,6 +13,7 @@ import (
 	"github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/loadbalancers"
 	v2monitors "github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/monitors"
 	v2pools "github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/pools"
+	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/floatingips"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/subnets"
 	"k8s.io/apimachinery/pkg/util/wait"
 )
@@ -180,4 +181,38 @@ func InitialClientOpenstack(config *PrivateNetworkConfig) (*gophercloud.Provider
 		return nil, fmt.Errorf("Failed to authenticate: %v", err)
 	}
 	return provider, nil
+}
+
+func GetFloatingIPLoadbalancer(config *PrivateNetworkConfig, lb *loadbalancers.LoadBalancer) (*string, error) {
+	var fipLB *string
+	provider, err := InitialClientOpenstack(config)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create provider for get Floating IP of LB [ID=%s]: [%v]", lb.ID, err)
+	}
+	networkClient, err := openstack.NewNetworkV2(provider, gophercloud.EndpointOpts{
+		Region: config.Region,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("Failed to create networking client: %v", err)
+	}
+	allPages, err := floatingips.List(networkClient, nil).AllPages()
+	if err != nil {
+		return nil, fmt.Errorf("Failed to list floating IPs: %v", err)
+	}
+
+	allFloatingIPs, err := floatingips.ExtractFloatingIPs(allPages)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to extract floating IPs: %v", err)
+	}
+
+	for _, fip := range allFloatingIPs {
+		if fip.FixedIP == lb.VipAddress {
+			fipLB = &fip.FloatingIP
+			break
+		}
+	}
+	if fipLB == nil {
+		return nil, fmt.Errorf("Unable to get floating IP of Loadbalancer [ID=%s]: NOT FOUND", lb.ID)
+	}
+	return fipLB, nil
 }

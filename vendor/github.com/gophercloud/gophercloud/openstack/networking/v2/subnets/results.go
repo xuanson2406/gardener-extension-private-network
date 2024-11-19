@@ -83,6 +83,12 @@ type Subnet struct {
 	// DNS name servers used by hosts in this subnet.
 	DNSNameservers []string `json:"dns_nameservers"`
 
+	//  Specifies whether the fixed IP addresses are published to the DNS.
+	DNSPublishFixedIP bool `json:"dns_publish_fixed_ip"`
+
+	// Service types associated with the subnet.
+	ServiceTypes []string `json:"service_types"`
+
 	// Sub-ranges of CIDR available for dynamic allocation to ports.
 	// See AllocationPool.
 	AllocationPools []AllocationPool `json:"allocation_pools"`
@@ -112,6 +118,9 @@ type Subnet struct {
 
 	// Tags optionally set via extensions/attributestags
 	Tags []string `json:"tags"`
+
+	// RevisionNumber optionally set via extensions/standard-attr-revisions
+	RevisionNumber int `json:"revision_number"`
 }
 
 // SubnetPage is the page returned by a pager when traversing over a collection
@@ -136,6 +145,10 @@ func (r SubnetPage) NextPageURL() (string, error) {
 
 // IsEmpty checks whether a SubnetPage struct is empty.
 func (r SubnetPage) IsEmpty() (bool, error) {
+	if r.StatusCode == 204 {
+		return true, nil
+	}
+
 	is, err := ExtractSubnets(r)
 	return len(is) == 0, err
 }

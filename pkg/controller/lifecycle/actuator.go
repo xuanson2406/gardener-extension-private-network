@@ -77,8 +77,6 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 	}
 	istioNamespace, err := a.findIstioNamespaceForExtension(ctx, ex)
 	if err != nil {
-		// we ignore errors for hibernated clusters if they don't have a Gateway
-		// resource for the extension to get the istio namespace from
 		if controller.IsHibernated(cluster) {
 			return client.IgnoreNotFound(err)
 		}
@@ -96,7 +94,15 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 	if err != nil {
 		return err
 	}
-	extState.AddressLoadBalancer
+	if extSpec.PrivateCluster {
+		extState.AddressLoadBalancer = &lbPrivateNetwork.VipAddress
+	} else {
+		fip, err := helper.GetFloatingIPLoadbalancer(privateNetworkConfig, lbPrivateNetwork)
+		if err != nil {
+			return err
+		}
+		extState.AddressLoadBalancer = fip
+	}
 	return a.updateStatus(ctx, ex, extState)
 }
 
