@@ -14,6 +14,7 @@ import (
 const (
 	secretConfig = "external-openstack-cloud-config"
 	namespace    = "kube-system"
+	flavorID     = "9a36b2e9-11ca-4e68-9093-e48e5cee7367"
 )
 
 type Global struct {
@@ -75,7 +76,7 @@ func GetGlobalConfigforPrivateNetwork(
 	if err != nil {
 		return nil, err
 	}
-	netSpec := Networks{}
+	netSpec := NetworkWorker{}
 	if infra.Spec.ProviderConfig != nil && infra.Spec.ProviderConfig.Raw != nil {
 		if err := json.Unmarshal(infra.Spec.ProviderConfig.Raw, &netSpec); err != nil {
 			return nil, err
@@ -86,13 +87,19 @@ func GetGlobalConfigforPrivateNetwork(
 		Namespace: namespace,
 		Name:      secretConfig,
 	}, secret)
+	if err != nil {
+		return nil, err
+	}
 	encodedData := secret.Data["cloud.conf"]
 	if encodedData == nil {
 		return nil, fmt.Errorf("cloud.conf key not found in the secret")
 	}
 	// Parse the decoded data into the struct
 	var cfg Config
-	err = gcfg.ReadStringInto(&cfg, string(encodedData))
+	_ = gcfg.ReadStringInto(&cfg, string(encodedData))
+	// if err != nil {
+	// 	return nil, err
+	// }
 	config := &PrivateNetworkConfig{
 		Endpoint:          cfg.Global.AuthURL,
 		Username:          cfg.Global.Username,
@@ -100,9 +107,10 @@ func GetGlobalConfigforPrivateNetwork(
 		DomainName:        cfg.Global.DomainName,
 		TenantID:          cfg.Global.TenantID,
 		Region:            cfg.Global.Region,
-		WorkerNetworkID:   netSpec.ID,
+		WorkerNetworkID:   netSpec.Network.ID,
 		IstioSubnetID:     cfg.LoadBalancer.SubnetID,
 		FloatingNetworkId: cfg.LoadBalancer.FloatingNetworkID,
+		FlavorID:          flavorID,
 	}
 	return config, nil
 }

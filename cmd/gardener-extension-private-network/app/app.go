@@ -56,10 +56,15 @@ func (o *Options) run(ctx context.Context) error {
 	mgrOpts := o.managerOptions.Completed().Options()
 
 	// do not enable a metrics server for the quick start
-	mgrOpts.MetricsBindAddress = "0"
+	// mgrOpts.MetricsBindAddress = "0"
 
-	mgrOpts.ClientDisableCacheFor = []client.Object{
-		&corev1.Secret{}, // applied for ManagedResources
+	mgrOpts.Client = client.Options{
+		Cache: &client.CacheOptions{
+			DisableFor: []client.Object{
+				&corev1.Secret{},    // applied for ManagedResources
+				&corev1.ConfigMap{}, // applied for monitoring config
+			},
+		},
 	}
 
 	mgr, err := manager.New(o.restOptions.Completed().Config, mgrOpts)
@@ -74,7 +79,7 @@ func (o *Options) run(ctx context.Context) error {
 	o.controllerOptions.Completed().Apply(&lifecycle.DefaultAddOptions.ControllerOptions)
 	o.lifecycleOptions.Completed().Apply(&lifecycle.DefaultAddOptions.ControllerOptions)
 
-	if err := o.controllerSwitches.Completed().AddToManager(mgr); err != nil {
+	if err := o.controllerSwitches.Completed().AddToManager(ctx, mgr); err != nil {
 		return fmt.Errorf("could not add controllers to manager: %s", err)
 	}
 

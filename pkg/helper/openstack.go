@@ -2,6 +2,7 @@ package helper
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"time"
@@ -31,6 +32,12 @@ const (
 	activeStatus = "ACTIVE"
 	errorStatus  = "ERROR"
 )
+
+// ErrNotFound is used to inform that the object is missing
+var ErrNotFound = errors.New("failed to find object")
+
+// ErrMultipleResults is used when we unexpectedly get back multiple results
+var ErrMultipleResults = errors.New("multiple results where only one expected")
 
 // WaitActiveAndGetLoadBalancer wait for LB active then return the LB object for further usage
 func WaitActiveAndGetLoadBalancer(client *gophercloud.ServiceClient, loadbalancerID string) (*loadbalancers.LoadBalancer, error) {
@@ -215,4 +222,46 @@ func GetFloatingIPLoadbalancer(config *PrivateNetworkConfig, lb *loadbalancers.L
 		return nil, fmt.Errorf("Unable to get floating IP of Loadbalancer [ID=%s]: NOT FOUND", lb.ID)
 	}
 	return fipLB, nil
+}
+
+// getLoadbalancerByName get the load balancer which is in valid status by the given name/legacy name.
+func getLoadbalancerByName(client *gophercloud.ServiceClient, name string) (*loadbalancers.LoadBalancer, error) {
+	var validLBs []loadbalancers.LoadBalancer
+
+	opts := loadbalancers.ListOpts{
+		Name: name,
+	}
+	allLoadbalancers, err := GetLoadBalancers(client, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, lb := range allLoadbalancers {
+		if lb.ProvisioningStatus != "DELETED" && lb.ProvisioningStatus != "PENDING_DELETE" {
+			validLBs = append(validLBs, lb)
+		}
+	}
+
+	if len(validLBs) > 1 {
+		return nil, ErrMultipleResults
+	}
+	if len(validLBs) == 0 {
+		return nil, ErrNotFound
+	}
+
+	return &validLBs[0], nil
+}
+
+// GetLoadBalancers returns all the filtered load balancer.
+func GetLoadBalancers(client *gophercloud.ServiceClient, opts loadbalancers.ListOpts) ([]loadbalancers.LoadBalancer, error) {
+	allPages, err := loadbalancers.List(client, opts).AllPages()
+	if err != nil {
+		return nil, err
+	}
+	allLoadbalancers, err := loadbalancers.ExtractLoadBalancers(allPages)
+	if err != nil {
+		return nil, err
+	}
+
+	return allLoadbalancers, nil
 }

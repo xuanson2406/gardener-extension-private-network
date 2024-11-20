@@ -26,7 +26,6 @@ import (
 
 	v1beta1constants "github.com/gardener/gardener/pkg/apis/core/v1beta1/constants"
 	"github.com/gardener/gardener/pkg/utils/timewindow"
-	versionutils "github.com/gardener/gardener/pkg/utils/version"
 )
 
 func addDefaultingFuncs(scheme *runtime.Scheme) error {
@@ -52,8 +51,19 @@ func SetDefaults_Seed(obj *Seed) {
 		obj.Spec.Settings = &SeedSettings{}
 	}
 
+	var defaultExcessCapacityReservationConfigs = []SeedSettingExcessCapacityReservationConfig{
+		// This roughly corresponds to a single, moderately large control-plane.
+		{Resources: corev1.ResourceList{corev1.ResourceCPU: resource.MustParse("2"), corev1.ResourceMemory: resource.MustParse("6Gi")}},
+	}
+
 	if obj.Spec.Settings.ExcessCapacityReservation == nil {
-		obj.Spec.Settings.ExcessCapacityReservation = &SeedSettingExcessCapacityReservation{Enabled: true}
+		obj.Spec.Settings.ExcessCapacityReservation = &SeedSettingExcessCapacityReservation{
+			Configs: defaultExcessCapacityReservationConfigs,
+		}
+	}
+
+	if pointer.BoolDeref(obj.Spec.Settings.ExcessCapacityReservation.Enabled, true) && len(obj.Spec.Settings.ExcessCapacityReservation.Configs) == 0 {
+		obj.Spec.Settings.ExcessCapacityReservation.Configs = defaultExcessCapacityReservationConfigs
 	}
 
 	if obj.Spec.Settings.Scheduling == nil {
@@ -62,10 +72,6 @@ func SetDefaults_Seed(obj *Seed) {
 
 	if obj.Spec.Settings.VerticalPodAutoscaler == nil {
 		obj.Spec.Settings.VerticalPodAutoscaler = &SeedSettingVerticalPodAutoscaler{Enabled: true}
-	}
-
-	if obj.Spec.Settings.OwnerChecks == nil {
-		obj.Spec.Settings.OwnerChecks = &SeedSettingOwnerChecks{Enabled: true}
 	}
 
 	if obj.Spec.Settings.DependencyWatchdog == nil {
@@ -97,15 +103,6 @@ func SetDefaults_Shoot(obj *Shoot) {
 		obj.Spec.Kubernetes.KubeControllerManager = &KubeControllerManagerConfig{}
 	}
 
-	if obj.Spec.Kubernetes.EnableStaticTokenKubeconfig == nil {
-		// Error is ignored here because we cannot do anything meaningful with it - variable will default to "false".
-		if k8sLessThan126, _ := versionutils.CheckVersionMeetsConstraint(obj.Spec.Kubernetes.Version, "< 1.26"); k8sLessThan126 {
-			obj.Spec.Kubernetes.EnableStaticTokenKubeconfig = pointer.Bool(true)
-		} else {
-			obj.Spec.Kubernetes.EnableStaticTokenKubeconfig = pointer.Bool(false)
-		}
-	}
-
 	if obj.Spec.Purpose == nil {
 		p := ShootPurposeEvaluation
 		obj.Spec.Purpose = &p
@@ -132,39 +129,43 @@ func SetDefaults_Shoot(obj *Shoot) {
 	}
 
 	for i, worker := range obj.Spec.Provider.Workers {
-		kubernetesVersion := obj.Spec.Kubernetes.Version
-		if worker.Kubernetes != nil && worker.Kubernetes.Version != nil {
-			kubernetesVersion = *worker.Kubernetes.Version
-		}
-
 		if worker.Machine.Architecture == nil {
 			obj.Spec.Provider.Workers[i].Machine.Architecture = pointer.String(v1beta1constants.ArchitectureAMD64)
-		}
-
-		if k8sVersionGreaterOrEqualThan122, _ := versionutils.CompareVersions(kubernetesVersion, ">=", "1.22"); !k8sVersionGreaterOrEqualThan122 {
-			// Error is ignored here because we cannot do anything meaningful with it.
-			// k8sVersionGreaterOrEqualThan122 will default to `false`.
-			continue
 		}
 
 		if worker.CRI == nil {
 			obj.Spec.Provider.Workers[i].CRI = &CRI{Name: CRINameContainerD}
 		}
+
+		if worker.Kubernetes != nil && worker.Kubernetes.Kubelet != nil {
+			if worker.Kubernetes.Kubelet.FailSwapOn == nil {
+				obj.Spec.Provider.Workers[i].Kubernetes.Kubelet.FailSwapOn = pointer.Bool(true)
+			}
+
+			if nodeSwapFeatureGateEnabled, ok := worker.Kubernetes.Kubelet.FeatureGates["NodeSwap"]; ok && nodeSwapFeatureGateEnabled && !*worker.Kubernetes.Kubelet.FailSwapOn {
+				if worker.Kubernetes.Kubelet.MemorySwap == nil {
+					obj.Spec.Provider.Workers[i].Kubernetes.Kubelet.MemorySwap = &MemorySwapConfiguration{}
+				}
+
+				if worker.Kubernetes.Kubelet.MemorySwap.SwapBehavior == nil {
+					limitedSwap := LimitedSwap
+					obj.Spec.Provider.Workers[i].Kubernetes.Kubelet.MemorySwap.SwapBehavior = &limitedSwap
+				}
+			}
+		}
 	}
 
 	// these fields are relevant only for shoot with workers
 	if len(obj.Spec.Provider.Workers) > 0 {
-		// Errors are ignored here because we cannot do anything meaningful with them - variables will default to `false`.
-		k8sLess125, _ := versionutils.CheckVersionMeetsConstraint(obj.Spec.Kubernetes.Version, "< 1.25")
-		if obj.Spec.Kubernetes.AllowPrivilegedContainers == nil && k8sLess125 && !isPSPDisabled(obj) {
-			obj.Spec.Kubernetes.AllowPrivilegedContainers = pointer.Bool(true)
+		if obj.Spec.Kubernetes.KubeAPIServer.DefaultNotReadyTolerationSeconds == nil {
+			obj.Spec.Kubernetes.KubeAPIServer.DefaultNotReadyTolerationSeconds = pointer.Int64(300)
+		}
+		if obj.Spec.Kubernetes.KubeAPIServer.DefaultUnreachableTolerationSeconds == nil {
+			obj.Spec.Kubernetes.KubeAPIServer.DefaultUnreachableTolerationSeconds = pointer.Int64(300)
 		}
 
 		if obj.Spec.Kubernetes.KubeControllerManager.NodeCIDRMaskSize == nil {
 			obj.Spec.Kubernetes.KubeControllerManager.NodeCIDRMaskSize = calculateDefaultNodeCIDRMaskSize(&obj.Spec)
-		}
-		if obj.Spec.Kubernetes.KubeControllerManager.NodeMonitorGracePeriod == nil {
-			obj.Spec.Kubernetes.KubeControllerManager.NodeMonitorGracePeriod = &metav1.Duration{Duration: 2 * time.Minute}
 		}
 
 		if obj.Spec.Kubernetes.KubeScheduler == nil {
@@ -202,6 +203,16 @@ func SetDefaults_Shoot(obj *Shoot) {
 		}
 		if obj.Spec.Kubernetes.Kubelet.FailSwapOn == nil {
 			obj.Spec.Kubernetes.Kubelet.FailSwapOn = pointer.Bool(true)
+		}
+
+		if nodeSwapFeatureGateEnabled, ok := obj.Spec.Kubernetes.Kubelet.FeatureGates["NodeSwap"]; ok && nodeSwapFeatureGateEnabled && !*obj.Spec.Kubernetes.Kubelet.FailSwapOn {
+			if obj.Spec.Kubernetes.Kubelet.MemorySwap == nil {
+				obj.Spec.Kubernetes.Kubelet.MemorySwap = &MemorySwapConfiguration{}
+			}
+			if obj.Spec.Kubernetes.Kubelet.MemorySwap.SwapBehavior == nil {
+				limitedSwap := LimitedSwap
+				obj.Spec.Kubernetes.Kubelet.MemorySwap.SwapBehavior = &limitedSwap
+			}
 		}
 		if obj.Spec.Kubernetes.Kubelet.ImageGCHighThresholdPercent == nil {
 			obj.Spec.Kubernetes.Kubelet.ImageGCHighThresholdPercent = pointer.Int32(50)
@@ -258,12 +269,16 @@ func SetDefaults_Shoot(obj *Shoot) {
 			obj.Spec.SystemComponents.CoreDNS.Autoscaling.Mode = CoreDNSAutoscalingModeHorizontal
 		}
 	}
+
+	if obj.Spec.SchedulerName == nil {
+		obj.Spec.SchedulerName = pointer.String(v1beta1constants.DefaultSchedulerName)
+	}
 }
 
 // SetDefaults_KubeAPIServerConfig sets default values for KubeAPIServerConfig objects.
 func SetDefaults_KubeAPIServerConfig(obj *KubeAPIServerConfig) {
 	if obj.Requests == nil {
-		obj.Requests = &KubeAPIServerRequests{}
+		obj.Requests = &APIServerRequests{}
 	}
 	if obj.Requests.MaxNonMutatingInflight == nil {
 		obj.Requests.MaxNonMutatingInflight = pointer.Int32(400)
@@ -278,18 +293,15 @@ func SetDefaults_KubeAPIServerConfig(obj *KubeAPIServerConfig) {
 		obj.EventTTL = &metav1.Duration{Duration: time.Hour}
 	}
 	if obj.Logging == nil {
-		obj.Logging = &KubeAPIServerLogging{}
+		obj.Logging = &APIServerLogging{}
 	}
 	if obj.Logging.Verbosity == nil {
 		obj.Logging.Verbosity = pointer.Int32(2)
 	}
-	if obj.DefaultNotReadyTolerationSeconds == nil {
-		obj.DefaultNotReadyTolerationSeconds = pointer.Int64(300)
-	}
-	if obj.DefaultUnreachableTolerationSeconds == nil {
-		obj.DefaultUnreachableTolerationSeconds = pointer.Int64(300)
-	}
 }
+
+// SetDefaults_KubeControllerManagerConfig sets default values for KubeControllerManagerConfig objects.
+func SetDefaults_KubeControllerManagerConfig(_ *KubeControllerManagerConfig) {}
 
 // SetDefaults_Networking sets default values for Networking objects.
 func SetDefaults_Networking(obj *Networking) {
@@ -438,15 +450,4 @@ func addTolerations(tolerations *[]Toleration, additionalTolerations ...Tolerati
 		}
 		*tolerations = append(*tolerations, toleration)
 	}
-}
-
-func isPSPDisabled(shoot *Shoot) bool {
-	if shoot.Spec.Kubernetes.KubeAPIServer != nil {
-		for _, plugin := range shoot.Spec.Kubernetes.KubeAPIServer.AdmissionPlugins {
-			if plugin.Name == "PodSecurityPolicy" && pointer.BoolDeref(plugin.Disabled, false) {
-				return true
-			}
-		}
-	}
-	return false
 }

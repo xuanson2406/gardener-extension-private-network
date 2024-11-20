@@ -137,10 +137,6 @@ func (r L7PolicyPage) NextPageURL() (string, error) {
 
 // IsEmpty checks whether a L7PolicyPage struct is empty.
 func (r L7PolicyPage) IsEmpty() (bool, error) {
-	if r.StatusCode == 204 {
-		return true, nil
-	}
-
 	is, err := ExtractL7Policies(r)
 	return len(is) == 0, err
 }
@@ -215,10 +211,6 @@ func (r RulePage) NextPageURL() (string, error) {
 
 // IsEmpty checks whether a RulePage struct is empty.
 func (r RulePage) IsEmpty() (bool, error) {
-	if r.StatusCode == 204 {
-		return true, nil
-	}
-
 	is, err := ExtractRules(r)
 	return len(is) == 0, err
 }

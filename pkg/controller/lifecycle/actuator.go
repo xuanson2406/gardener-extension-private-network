@@ -13,26 +13,27 @@ import (
 
 	"github.com/gardener/gardener-extension-private-network/pkg/extensionspec"
 	"github.com/gardener/gardener-extension-private-network/pkg/helper"
-	"github.com/gardener/gardener/extensions/pkg/controller"
 	"github.com/gardener/gardener/extensions/pkg/controller/extension"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
-	istionetworkv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
-
 	"github.com/go-logr/logr"
+	istionetworkv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/rest"
+	"k8s.io/klog"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 const (
-	deletionTimeout  = 2 * time.Minute
-	istioGatewayName = "kube-apiserver"
-	keyIstio         = "istio-ingressgateway"
+	deletionTimeout       = 2 * time.Minute
+	istioGatewayName      = "kube-apiserver"
+	keyIstio              = "istio-ingressgateway"
+	namespaceIstioIngress = "istio-ingress"
+	prefixLB              = "private-network"
 )
 
 // NewActuator returns an actuator responsible for Extension resources.
@@ -60,11 +61,11 @@ type ExtensionState struct {
 // Reconcile the Extension resource.
 func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extensionsv1alpha1.Extension) error {
 	a.logger.Info("Hello World, I just entered the Reconcile method")
+	nameLB := fmt.Sprintf("%s-%s", prefixLB, ex.Namespace)
 	cluster, err := helper.GetClusterForExtension(ctx, a.client, ex)
 	if err != nil {
 		return err
 	}
-
 	extSpec := &extensionspec.ExtensionSpec{}
 	if ex.Spec.ProviderConfig != nil && ex.Spec.ProviderConfig.Raw != nil {
 		if err := json.Unmarshal(ex.Spec.ProviderConfig.Raw, &extSpec); err != nil {
@@ -75,20 +76,13 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 	if err != nil {
 		return err
 	}
-	istioNamespace, err := a.findIstioNamespaceForExtension(ctx, ex)
-	if err != nil {
-		if controller.IsHibernated(cluster) {
-			return client.IgnoreNotFound(err)
-		}
-		return err
-	}
-	vipLBistio, err := a.findVipLBistio(ctx, istioNamespace)
+	vipLBistio, err := a.findVipLBistio(ctx, namespaceIstioIngress)
 	if err != nil {
 		return err
 	}
 	privateNetworkConfig, err := helper.GetGlobalConfigforPrivateNetwork(ctx, a.client, ex, cluster.Shoot.Name)
 	if err != nil {
-		return fmt.Errorf("Error to get private network configuration for shoot %s: [%v]", cluster.Shoot.Name, err)
+		return fmt.Errorf("error to get private network configuration for shoot %s: [%v]", cluster.Shoot.Name, err)
 	}
 	lbPrivateNetwork, err := helper.CreateLoadBalancer(ctx, privateNetworkConfig, ex, vipLBistio)
 	if err != nil {
@@ -157,10 +151,11 @@ func (a *actuator) findVipLBistio(ctx context.Context, istioNamespace string) ([
 	svcList := &v1.ServiceList{}
 	err := a.client.List(ctx, svcList, client.InNamespace(istioNamespace))
 	if err != nil {
-		return nil, fmt.Errorf("Failed to list services in namespace %s: %v", istioNamespace, err)
+		return nil, fmt.Errorf("failed to list services in namespace %s: %v", istioNamespace, err)
 	}
 	for _, svc := range svcList.Items {
 		if svc.Spec.Type == v1.ServiceTypeLoadBalancer && svc.Spec.Selector["app"] == keyIstio {
+			klog.Infof("Add IP external %s to list", svc.Status.LoadBalancer.Ingress[0].IP)
 			istioIPlist = append(istioIPlist, svc.Status.LoadBalancer.Ingress[0].IP)
 		}
 	}

@@ -15,6 +15,7 @@ rules:
   - extensions.gardener.cloud
   resources:
   - clusters
+  - infrastructures
   verbs:
   - get
   - list
