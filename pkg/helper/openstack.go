@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"time"
 
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
@@ -17,17 +18,17 @@ import (
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/floatingips"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/subnets"
 	"k8s.io/apimachinery/pkg/util/wait"
+	"k8s.io/klog/v2"
 )
 
 const (
-	OctaviaFeatureFlavors = 2
 	OctaviaFeatureTimeout = 3
 
 	waitLoadbalancerInitDelay   = 1 * time.Second
 	waitLoadbalancerFactor      = 1.2
-	waitLoadbalancerActiveSteps = 23
+	waitLoadbalancerActiveSteps = 25
 	waitLoadbalancerDeleteSteps = 12
-	steps                       = 23
+	steps                       = 25
 
 	activeStatus = "ACTIVE"
 	errorStatus  = "ERROR"
@@ -77,7 +78,8 @@ func WaitActiveAndGetLoadBalancer(client *gophercloud.ServiceClient, loadbalance
 func CreateLoadBalancer(ctx context.Context,
 	config *PrivateNetworkConfig,
 	extension *extensionsv1alpha1.Extension,
-	istioVIP []string) (*loadbalancers.LoadBalancer, error) {
+	istioVIP []string,
+	nameLoadbalancer string) (*loadbalancers.LoadBalancer, error) {
 	var workerSubnetID string
 	provider, err := InitialClientOpenstack(config)
 	if err != nil {
@@ -115,18 +117,17 @@ func CreateLoadBalancer(ctx context.Context,
 			workerSubnetID = subnet.ID
 		}
 	}
-	lbName := fmt.Sprintf("private-network-%s", extension.Namespace)
 	createOpts := loadbalancers.CreateOpts{
-		Name:         lbName,
+		Name:         nameLoadbalancer,
 		Description:  fmt.Sprintf("Loadbalancer for private network cluster"),
 		Provider:     "amphora",
 		FlavorID:     config.FlavorID,
 		VipNetworkID: config.WorkerNetworkID,
 		VipSubnetID:  workerSubnetID,
 	}
-	listener_443 := buildListeners(lbName, workerSubnetID, istioVIP, 443)
-	listener_8443 := buildListeners(lbName, workerSubnetID, istioVIP, 8443)
-	listener_8132 := buildListeners(lbName, workerSubnetID, istioVIP, 8132)
+	listener_443 := buildListeners(nameLoadbalancer, workerSubnetID, istioVIP, 443)
+	listener_8443 := buildListeners(nameLoadbalancer, workerSubnetID, istioVIP, 8443)
+	listener_8132 := buildListeners(nameLoadbalancer, workerSubnetID, istioVIP, 8132)
 	createOpts.Listeners = append(createOpts.Listeners, listener_443, listener_8443, listener_8132)
 	lb, err := loadbalancers.Create(clientLB, createOpts).Extract()
 	if err != nil {
@@ -224,6 +225,21 @@ func GetFloatingIPLoadbalancer(config *PrivateNetworkConfig, lb *loadbalancers.L
 	return fipLB, nil
 }
 
+func GetLoadbalancerByName(config *PrivateNetworkConfig, name string) (*loadbalancers.LoadBalancer, error) {
+	provider, err := InitialClientOpenstack(config)
+	if err != nil {
+		return nil, err
+	}
+	// Initialize the Loadbalancer client
+	clientLB, err := openstack.NewLoadBalancerV2(provider, gophercloud.EndpointOpts{
+		Region: config.Region,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create network client: %v", err)
+	}
+	return getLoadbalancerByName(clientLB, name)
+}
+
 // getLoadbalancerByName get the load balancer which is in valid status by the given name/legacy name.
 func getLoadbalancerByName(client *gophercloud.ServiceClient, name string) (*loadbalancers.LoadBalancer, error) {
 	var validLBs []loadbalancers.LoadBalancer
@@ -264,4 +280,89 @@ func GetLoadBalancers(client *gophercloud.ServiceClient, opts loadbalancers.List
 	}
 
 	return allLoadbalancers, nil
+}
+
+// DeleteLoadbalancer deletes a loadbalancer and wait for it's gone.
+func DeleteLoadbalancer(config *PrivateNetworkConfig, loadbalancer *loadbalancers.LoadBalancer, cascade bool) error {
+	provider, err := InitialClientOpenstack(config)
+	if err != nil {
+		return err
+	}
+	// Initialize the Loadbalancer client
+	clientLB, err := openstack.NewLoadBalancerV2(provider, gophercloud.EndpointOpts{
+		Region: config.Region,
+	})
+	if err != nil {
+		return fmt.Errorf("failed to create network client: %v", err)
+	}
+	if loadbalancer.ProvisioningStatus != activeStatus && loadbalancer.ProvisioningStatus != errorStatus {
+		return fmt.Errorf("load balancer %s is in immutable status, current provisioning status: %s", loadbalancer.ID, loadbalancer.ProvisioningStatus)
+	}
+
+	return deleteLoadbalancer(clientLB, loadbalancer.ID, cascade)
+}
+func deleteLoadbalancer(client *gophercloud.ServiceClient, lbID string, cascade bool) error {
+	opts := loadbalancers.DeleteOpts{}
+	if cascade {
+		opts.Cascade = true
+	}
+
+	err := loadbalancers.Delete(client, lbID, opts).ExtractErr()
+	if err != nil && !IsNotFound(err) {
+		return fmt.Errorf("error deleting loadbalancer %s: %v", lbID, err)
+	}
+
+	if err := waitLoadbalancerDeleted(client, lbID); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func waitLoadbalancerDeleted(client *gophercloud.ServiceClient, loadbalancerID string) error {
+	klog.V(4).InfoS("Waiting for load balancer deleted", "lbID", loadbalancerID)
+	backoff := wait.Backoff{
+		Duration: waitLoadbalancerInitDelay,
+		Factor:   waitLoadbalancerFactor,
+		Steps:    waitLoadbalancerDeleteSteps,
+	}
+	err := wait.ExponentialBackoff(backoff, func() (bool, error) {
+		_, err := loadbalancers.Get(client, loadbalancerID).Extract()
+		if err != nil {
+			if IsNotFound(err) {
+				klog.V(4).InfoS("Load balancer deleted", "lbID", loadbalancerID)
+				return true, nil
+			}
+			return false, err
+		}
+		return false, nil
+	})
+
+	if wait.Interrupted(err) {
+		err = fmt.Errorf("loadbalancer failed to delete within the allotted time")
+	}
+
+	return err
+}
+
+func IsNotFound(err error) bool {
+	if err == ErrNotFound {
+		return true
+	}
+
+	if _, ok := err.(gophercloud.ErrDefault404); ok {
+		return true
+	}
+
+	if _, ok := err.(gophercloud.ErrResourceNotFound); ok {
+		return true
+	}
+
+	if errCode, ok := err.(gophercloud.ErrUnexpectedResponseCode); ok {
+		if errCode.Actual == http.StatusNotFound {
+			return true
+		}
+	}
+
+	return false
 }

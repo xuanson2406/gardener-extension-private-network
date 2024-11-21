@@ -16,24 +16,26 @@ import (
 	"github.com/gardener/gardener/extensions/pkg/controller/extension"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"github.com/go-logr/logr"
-	istionetworkv1beta1 "istio.io/client-go/pkg/apis/networking/v1beta1"
-	appsv1 "k8s.io/api/apps/v1"
+	"github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/loadbalancers"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	"k8s.io/client-go/rest"
-	"k8s.io/klog"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
 
 const (
-	deletionTimeout       = 2 * time.Minute
-	istioGatewayName      = "kube-apiserver"
-	keyIstio              = "istio-ingressgateway"
-	namespaceIstioIngress = "istio-ingress"
-	prefixLB              = "private-network"
+	deletionTimeout                     = 2 * time.Minute
+	istioGatewayName                    = "kube-apiserver"
+	keyIstio                            = "istio-ingressgateway"
+	namespaceIstioIngress               = "istio-ingress"
+	activeStatus                        = "ACTIVE"
+	errorStatus                         = "ERROR"
+	defaultLoadBalancerSourceRangesIPv4 = "0.0.0.0/0"
+	prefixLB                            = "private-network"
 )
 
 // NewActuator returns an actuator responsible for Extension resources.
@@ -62,6 +64,7 @@ type ExtensionState struct {
 func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extensionsv1alpha1.Extension) error {
 	a.logger.Info("Hello World, I just entered the Reconcile method")
 	nameLB := fmt.Sprintf("%s-%s", prefixLB, ex.Namespace)
+	var loadbalancer *loadbalancers.LoadBalancer
 	cluster, err := helper.GetClusterForExtension(ctx, a.client, ex)
 	if err != nil {
 		return err
@@ -84,14 +87,32 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 	if err != nil {
 		return fmt.Errorf("error to get private network configuration for shoot %s: [%v]", cluster.Shoot.Name, err)
 	}
-	lbPrivateNetwork, err := helper.CreateLoadBalancer(ctx, privateNetworkConfig, ex, vipLBistio)
+	loadbalancer, err = helper.GetLoadbalancerByName(privateNetworkConfig, nameLB)
 	if err != nil {
-		return err
+		if err != helper.ErrNotFound {
+			return fmt.Errorf("error getting loadbalancer for extension %s: [%v]", ex.Namespace, err)
+		}
+		klog.InfoS("Creating loadbalancer", "lbName", nameLB, "extension", klog.KObj(ex))
+		loadbalancer, err = helper.CreateLoadBalancer(ctx, privateNetworkConfig, ex, vipLBistio, nameLB)
+		if err != nil {
+			return err
+		}
+	}
+	if loadbalancer.ProvisioningStatus != activeStatus {
+		if loadbalancer.ProvisioningStatus == errorStatus {
+			err := helper.DeleteLoadbalancer(privateNetworkConfig, loadbalancer, false)
+			if err != nil {
+				return fmt.Errorf("error to delete the error Loadbalancer [ID=%s] [Name=%s]: [%v]", loadbalancer.ID, loadbalancer.Name, err)
+			}
+			return fmt.Errorf("load balancer for extension private-network [ns=%s] current provisioning status is %s, deleted it and recreate",
+				ex.Namespace, errorStatus)
+		}
+		return fmt.Errorf("load balancer %s is not ACTIVE, current provisioning status: %s", loadbalancer.ID, loadbalancer.ProvisioningStatus)
 	}
 	if extSpec.PrivateCluster {
-		extState.AddressLoadBalancer = &lbPrivateNetwork.VipAddress
+		extState.AddressLoadBalancer = &loadbalancer.VipAddress
 	} else {
-		fip, err := helper.GetFloatingIPLoadbalancer(privateNetworkConfig, lbPrivateNetwork)
+		fip, err := helper.GetFloatingIPLoadbalancer(privateNetworkConfig, loadbalancer)
 		if err != nil {
 			return err
 		}
@@ -103,7 +124,25 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 // Delete the Extension resource.
 func (a *actuator) Delete(ctx context.Context, log logr.Logger, ex *extensionsv1alpha1.Extension) error {
 	a.logger.Info("Hello World, I just entered the Delete method")
-	return nil
+	namespace := ex.GetNamespace()
+	log.Info("Component is being deleted", "component", "", "namespace", namespace)
+	nameLB := fmt.Sprintf("%s-%s", prefixLB, ex.Namespace)
+	cluster, err := helper.GetClusterForExtension(ctx, a.client, ex)
+	if err != nil {
+		return err
+	}
+	privateNetworkConfig, err := helper.GetGlobalConfigforPrivateNetwork(ctx, a.client, ex, cluster.Shoot.Name)
+	if err != nil {
+		return fmt.Errorf("error to get private network configuration for shoot %s: [%v]", cluster.Shoot.Name, err)
+	}
+	loadbalancer, err := helper.GetLoadbalancerByName(privateNetworkConfig, nameLB)
+	if err != nil {
+		if err != helper.ErrNotFound {
+			return fmt.Errorf("error getting loadbalancer for extension %s: [%v]", ex.Namespace, err)
+		}
+		return nil
+	}
+	return helper.DeleteLoadbalancer(privateNetworkConfig, loadbalancer, false)
 }
 
 // Restore the Extension resource.
@@ -114,36 +153,6 @@ func (a *actuator) Restore(ctx context.Context, log logr.Logger, ex *extensionsv
 // Migrate the Extension resource.
 func (a *actuator) Migrate(ctx context.Context, log logr.Logger, ex *extensionsv1alpha1.Extension) error {
 	return a.Delete(ctx, log, ex)
-}
-
-func (a *actuator) findIstioNamespaceForExtension(
-	ctx context.Context, ex *extensionsv1alpha1.Extension,
-) (
-	istioNamespace string,
-	err error,
-) {
-	gw := istionetworkv1beta1.Gateway{}
-
-	err = a.client.Get(ctx, client.ObjectKey{
-		Namespace: ex.Namespace,
-		Name:      istioGatewayName,
-	}, &gw)
-	if err != nil {
-		return "", err
-	}
-
-	labelsSelector := client.MatchingLabels(gw.Spec.Selector)
-
-	deployments := appsv1.DeploymentList{}
-	err = a.client.List(ctx, &deployments, labelsSelector)
-	if err != nil {
-		return "", err
-	}
-	if len(deployments.Items) != 1 {
-		return "", fmt.Errorf("no istio namespace could be selected, because the number of deployments found is %d", len(deployments.Items))
-	}
-
-	return deployments.Items[0].Namespace, nil
 }
 
 func (a *actuator) findVipLBistio(ctx context.Context, istioNamespace string) ([]string, error) {
