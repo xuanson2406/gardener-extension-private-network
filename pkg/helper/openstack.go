@@ -2,12 +2,16 @@ package helper
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"regexp"
+	"strings"
 	"time"
 
+	"github.com/gardener/gardener-extension-private-network/pkg/extensionspec"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
@@ -16,7 +20,9 @@ import (
 	v2monitors "github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/monitors"
 	v2pools "github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/pools"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/floatingips"
+	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/portforwarding"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/subnets"
+	"gopkg.in/godo.v2/glob"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
 )
@@ -39,6 +45,236 @@ var ErrNotFound = errors.New("failed to find object")
 
 // ErrMultipleResults is used when we unexpectedly get back multiple results
 var ErrMultipleResults = errors.New("multiple results where only one expected")
+
+// floatingSubnetSpec contains the specification of the public subnet to use for
+// a public network. If given it may either describe the subnet id or
+// a subnet name pattern for the subnet to use. If a pattern is given
+// the first subnet matching the name pattern with an allocatable floating ip
+// will be selected.
+type floatingSubnetSpec struct {
+	subnetID   string
+	subnet     string
+	subnetTags string
+}
+
+// TweakSubNetListOpsFunction is used to modify List Options for subnets
+type TweakSubNetListOpsFunction func(*subnets.ListOpts)
+
+// matcher matches a subnet
+type matcher func(subnet *subnets.Subnet) bool
+
+func andMatcher(a, b matcher) matcher {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	return func(s *subnets.Subnet) bool {
+		return a(s) && b(s)
+	}
+}
+
+// reexpNameMatcher creates a subnet matcher matching a subnet by name for a given regexp.
+func regexpNameMatcher(r *regexp.Regexp) matcher {
+	return func(s *subnets.Subnet) bool { return r.FindString(s.Name) == s.Name }
+}
+
+// subnetNameMatcher creates a subnet matcher matching a subnet by name for a given glob
+// or regexp
+func subnetNameMatcher(pat string) (matcher, error) {
+	// try to create floating IP in matching subnets
+	var match matcher
+	not := false
+	if strings.HasPrefix(pat, "!") {
+		not = true
+		pat = pat[1:]
+	}
+	if strings.HasPrefix(pat, "~") {
+		rexp, err := regexp.Compile(pat[1:])
+		if err != nil {
+			return nil, fmt.Errorf("invalid subnet regexp pattern %q: %s", pat[1:], err)
+		}
+		match = regexpNameMatcher(rexp)
+	} else {
+		match = regexpNameMatcher(glob.Globexp(pat))
+	}
+	if not {
+		match = negate(match)
+	}
+	return match, nil
+}
+
+// negate returns a negated matches for a given one
+func negate(f matcher) matcher { return func(s *subnets.Subnet) bool { return !f(s) } }
+
+// subnetTagMatcher matches a subnet by a given tag spec
+func subnetTagMatcher(tags string) matcher {
+	// try to create floating IP in matching subnets
+	var match matcher
+
+	list, not, all := tagList(tags)
+
+	match = func(s *subnets.Subnet) bool {
+		for _, tag := range list {
+			found := false
+			for _, t := range s.Tags {
+				if t == tag {
+					found = true
+					break
+				}
+			}
+			if found {
+				if !all {
+					return !not
+				}
+			} else {
+				if all {
+					return not
+				}
+			}
+		}
+		return not != all
+	}
+	return match
+}
+
+func (s *floatingSubnetSpec) Configured() bool {
+	if s != nil && (s.subnetID != "" || s.MatcherConfigured()) {
+		return true
+	}
+	return false
+}
+
+func (s *floatingSubnetSpec) ListSubnetsForNetwork(netClient *gophercloud.ServiceClient, networkID string) ([]subnets.Subnet, error) {
+	matcher, err := s.Matcher(false)
+	if err != nil {
+		return nil, err
+	}
+	list, err := listSubnetsForNetwork(netClient, networkID, s.tweakListOpts)
+	if err != nil {
+		return nil, err
+	}
+	if matcher == nil {
+		return list, nil
+	}
+
+	// filter subnets according to spec
+	var foundSubnets []subnets.Subnet
+	for _, subnet := range list {
+		if matcher(&subnet) {
+			foundSubnets = append(foundSubnets, subnet)
+		}
+	}
+	return foundSubnets, nil
+}
+
+// tweakListOpts can be used to optimize a subnet list query for the
+// actually described subnet filter
+func (s *floatingSubnetSpec) tweakListOpts(opts *subnets.ListOpts) {
+	if s.subnetTags != "" {
+		list, not, all := tagList(s.subnetTags)
+		tags := strings.Join(list, ",")
+		if all {
+			if not {
+				opts.NotTagsAny = tags // at least one tag must be missing
+			} else {
+				opts.Tags = tags // all tags must be present
+			}
+		} else {
+			if not {
+				opts.NotTags = tags // none of the tags are present
+			} else {
+				opts.TagsAny = tags // at least one tag is present
+			}
+		}
+	}
+}
+
+func (s *floatingSubnetSpec) MatcherConfigured() bool {
+	if s != nil && s.subnetID == "" && (s.subnet != "" || s.subnetTags != "") {
+		return true
+	}
+	return false
+}
+
+func addField(s, name, value string) string {
+	if value == "" {
+		return s
+	}
+	if s == "" {
+		s += ", "
+	}
+	return fmt.Sprintf("%s%s: %q", s, name, value)
+}
+
+func (s *floatingSubnetSpec) String() string {
+	if s == nil || (s.subnetID == "" && s.subnet == "" && s.subnetTags == "") {
+		return "<none>"
+	}
+	pat := addField("", "subnetID", s.subnetID)
+	pat = addField(pat, "pattern", s.subnet)
+	return addField(pat, "tags", s.subnetTags)
+}
+
+func (s *floatingSubnetSpec) Matcher(tag bool) (matcher, error) {
+	if !s.MatcherConfigured() {
+		return nil, nil
+	}
+	var match matcher
+	var err error
+	if s.subnet != "" {
+		match, err = subnetNameMatcher(s.subnet)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if tag && s.subnetTags != "" {
+		match = andMatcher(match, subnetTagMatcher(s.subnetTags))
+	}
+	if match == nil {
+		match = func(s *subnets.Subnet) bool { return true }
+	}
+	return match, nil
+}
+
+func tagList(tags string) ([]string, bool, bool) {
+	not := strings.HasPrefix(tags, "!")
+	if not {
+		tags = tags[1:]
+	}
+	all := strings.HasPrefix(tags, "&")
+	if all {
+		tags = tags[1:]
+	}
+	list := strings.Split(tags, ",")
+	for i := range list {
+		list[i] = strings.TrimSpace(list[i])
+	}
+	return list, not, all
+}
+
+func listSubnetsForNetwork(netClient *gophercloud.ServiceClient, networkID string, tweak ...TweakSubNetListOpsFunction) ([]subnets.Subnet, error) {
+	var opts = subnets.ListOpts{NetworkID: networkID}
+	for _, f := range tweak {
+		if f != nil {
+			f(&opts)
+		}
+	}
+	allPages, err := subnets.List(netClient, opts).AllPages()
+	if err != nil {
+		return nil, fmt.Errorf("error listing subnets of network %s: %v", networkID, err)
+	}
+	subs, err := subnets.ExtractSubnets(allPages)
+	if err != nil {
+		return nil, fmt.Errorf("error extracting subnets from pages: %v", err)
+	}
+
+	if len(subs) == 0 {
+		return nil, fmt.Errorf("could not find subnets for network %s", networkID)
+	}
+	return subs, nil
+}
 
 // WaitActiveAndGetLoadBalancer wait for LB active then return the LB object for further usage
 func WaitActiveAndGetLoadBalancer(client *gophercloud.ServiceClient, loadbalancerID string) (*loadbalancers.LoadBalancer, error) {
@@ -137,6 +373,11 @@ func CreateLoadBalancer(ctx context.Context,
 	if err != nil {
 		return nil, fmt.Errorf("Error creating Loadbalancer for Private Network: [%v]", err)
 	}
+
+	// floatIP, err := attachFloatingIP(clientLB, clientNetwork, lb, config, extension)
+	// if err != nil{
+	// 	return
+	// }
 	return lb, nil
 }
 
@@ -365,4 +606,172 @@ func IsNotFound(err error) bool {
 	}
 
 	return false
+}
+
+func AttachFloatingIP(lb *loadbalancers.LoadBalancer,
+	config *PrivateNetworkConfig,
+	ex *extensionsv1alpha1.Extension) (string, error) {
+	provider, err := InitialClientOpenstack(config)
+	if err != nil {
+		return "", err
+	}
+	// Initialize the networking client
+	clientNetwork, err := openstack.NewNetworkV2(provider, gophercloud.EndpointOpts{
+		Region: config.Region, // Replace with your region
+	})
+	if err != nil {
+		return "", fmt.Errorf("failed to create network client: %v", err)
+	}
+	portID := lb.VipPortID
+	extSpec := &extensionspec.ExtensionSpec{}
+	if ex.Spec.ProviderConfig != nil && ex.Spec.ProviderConfig.Raw != nil {
+		if err := json.Unmarshal(ex.Spec.ProviderConfig.Raw, &extSpec); err != nil {
+			return "", err
+		}
+	}
+	floatIP, err := getFloatingIPByPortID(clientNetwork, portID)
+	if err != nil {
+		return "", fmt.Errorf("failed when getting floating IP for port %s: %v", portID, err)
+	}
+	if floatIP != nil {
+		klog.V(4).Infof("Found floating ip %v by loadbalancer port id %q", floatIP, portID)
+	}
+	if extSpec.PrivateCluster {
+		if floatIP != nil {
+			// if FIP wasn't deleted we should still detach it because we use private cluster
+			_, err = updateFloatingIP(clientNetwork, floatIP, nil)
+			if err != nil {
+				return "", fmt.Errorf("erorr to detach fip from LB [ID=%s] private cluster: [%v]", lb.ID, err)
+			}
+		}
+		return lb.VipAddress, nil
+	}
+	if floatIP == nil {
+		klog.V(2).Infof("Checking floating IP for loadbalancer %s in poolID %s", lb.ID, config.FloatingNetworkId)
+		opts := floatingips.ListOpts{
+			FloatingNetworkID: config.FloatingNetworkId,
+			Status:            "DOWN",
+			PortID:            "",
+			ProjectID:         lb.ProjectID,
+		}
+		availableIPs, err := getFloatingIPs(clientNetwork, opts)
+		if err != nil {
+			return "", fmt.Errorf("failed when trying to get available floating IP in pool %s, error: %v", config.FloatingNetworkId, err)
+		}
+		if len(availableIPs) > 0 {
+			for _, fip := range availableIPs {
+				allPages, err := portforwarding.List(clientNetwork, portforwarding.ListOpts{}, fip.ID).AllPages()
+				if err != nil {
+					panic(err)
+				}
+
+				allPFs, err := portforwarding.ExtractPortForwardings(allPages)
+				if err != nil {
+					panic(err)
+				}
+				if len(fip.PortID) == 0 && len(allPFs) == 0 { // Checking fip has no port forwarding to available for associate to LB
+					floatIP, err = updateFloatingIP(clientNetwork, &fip, &lb.VipPortID)
+					if err != nil {
+						return "", err
+					}
+				}
+			}
+		}
+		if floatIP == nil {
+			var lbPublicSubnetSpec *floatingSubnetSpec
+			klog.V(2).Infof("Creating floating IP for loadbalancer %s", lb.ID)
+			floatIPOpts := floatingips.CreateOpts{
+				FloatingNetworkID: config.FloatingNetworkId,
+				PortID:            portID,
+				Description:       fmt.Sprintf("Floating IP for Private Kubernetes Cluster service from cluster %s", ex.Namespace),
+			}
+			var foundSubnet subnets.Subnet
+			// tweak list options for tags
+			foundSubnets, err := lbPublicSubnetSpec.ListSubnetsForNetwork(clientNetwork, config.FloatingNetworkId)
+			if err != nil {
+				return "", err
+			}
+			if len(foundSubnets) == 0 {
+				return "", fmt.Errorf("no subnet matching found for network %s",
+					config.FloatingNetworkId)
+			}
+
+			// try to create floating IP in matching subnets (tags already filtered by list options)
+			klog.V(4).Infof("found %d subnets matching for network %s", len(foundSubnets), config.FloatingNetworkId)
+			for _, subnet := range foundSubnets {
+				floatIPOpts.SubnetID = subnet.ID
+				floatIP, err = createFloatingIP(clientNetwork, fmt.Sprintf("Trying subnet %s for creating", subnet.Name), floatIPOpts)
+				if err == nil {
+					foundSubnet = subnet
+					break
+				}
+				klog.V(2).Infof("cannot use subnet %s: %s", subnet.Name, err)
+			}
+			if err != nil {
+				return "", fmt.Errorf("no free subnet matching found for network %s (last error %s)", config.FloatingNetworkId, err)
+			}
+			klog.V(2).Infof("Successfully created floating IP %s for loadbalancer %s on subnet %s(%s)", floatIP.FloatingIP, lb.ID, foundSubnet.Name, foundSubnet.ID)
+		}
+	}
+	if floatIP != nil {
+		return floatIP.FloatingIP, nil
+	}
+
+	return lb.VipAddress, nil
+}
+
+// updateFloatingIP is used to attach/detach fip to/from Loadbalancer
+func updateFloatingIP(c *gophercloud.ServiceClient, floatingip *floatingips.FloatingIP, portID *string) (*floatingips.FloatingIP, error) {
+	floatUpdateOpts := floatingips.UpdateOpts{
+		PortID: portID,
+	}
+	if portID != nil {
+		klog.V(4).Infof("Attaching floating ip %q to loadbalancer port %q", floatingip.FloatingIP, portID)
+	} else {
+		klog.V(4).Infof("Detaching floating ip %q from port %q", floatingip.FloatingIP, floatingip.PortID)
+	}
+	floatingip, err := floatingips.Update(c, floatingip.ID, floatUpdateOpts).Extract()
+	if err != nil {
+		return nil, fmt.Errorf("error updating LB floatingip %+v: %v", floatUpdateOpts, err)
+	}
+	return floatingip, nil
+}
+
+// getFloatingIPs returns all the filtered floating IPs
+func getFloatingIPs(client *gophercloud.ServiceClient, opts floatingips.ListOpts) ([]floatingips.FloatingIP, error) {
+	var floatingIPList []floatingips.FloatingIP
+
+	allPages, _ := floatingips.List(client, opts).AllPages()
+	floatingIPList, err := floatingips.ExtractFloatingIPs(allPages)
+	if err != nil {
+		return floatingIPList, err
+	}
+
+	return floatingIPList, nil
+}
+
+// getFloatingIPByPortID get the floating IP of the given port.
+func getFloatingIPByPortID(client *gophercloud.ServiceClient, portID string) (*floatingips.FloatingIP, error) {
+	opt := floatingips.ListOpts{
+		PortID: portID,
+	}
+	ips, err := getFloatingIPs(client, opt)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(ips) == 0 {
+		return nil, nil
+	}
+
+	return &ips[0], nil
+}
+
+func createFloatingIP(netClient *gophercloud.ServiceClient, msg string, floatIPOpts floatingips.CreateOpts) (*floatingips.FloatingIP, error) {
+	klog.V(4).Infof("%s floating ip with opts %+v", msg, floatIPOpts)
+	floatIP, err := floatingips.Create(netClient, floatIPOpts).Extract()
+	if err != nil {
+		return floatIP, fmt.Errorf("error creating LB floatingip: %s", err)
+	}
+	return floatIP, err
 }

@@ -11,6 +11,9 @@ github.com/Masterminds/semver
 # github.com/Masterminds/sprig v2.22.0+incompatible
 ## explicit
 github.com/Masterminds/sprig
+# github.com/MichaelTJones/walk v0.0.0-20161122175330-4748e29d5718
+## explicit
+github.com/MichaelTJones/walk
 # github.com/ahmetb/gen-crd-api-reference-docs v0.3.0
 ## explicit; go 1.15
 github.com/ahmetb/gen-crd-api-reference-docs
@@ -243,6 +246,7 @@ github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/loadbalancers
 github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/monitors
 github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/pools
 github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/floatingips
+github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/portforwarding
 github.com/gophercloud/gophercloud/openstack/networking/v2/subnets
 github.com/gophercloud/gophercloud/openstack/utils
 github.com/gophercloud/gophercloud/pagination
@@ -284,6 +288,9 @@ github.com/mattn/go-isatty
 # github.com/matttproud/golang_protobuf_extensions v1.0.4
 ## explicit; go 1.9
 github.com/matttproud/golang_protobuf_extensions/pbutil
+# github.com/mgutz/str v1.2.0
+## explicit
+github.com/mgutz/str
 # github.com/mitchellh/copystructure v1.2.0
 ## explicit; go 1.15
 github.com/mitchellh/copystructure
@@ -508,6 +515,9 @@ gopkg.in/gcfg.v1
 gopkg.in/gcfg.v1/scanner
 gopkg.in/gcfg.v1/token
 gopkg.in/gcfg.v1/types
+# gopkg.in/godo.v2 v2.0.9
+## explicit
+gopkg.in/godo.v2/glob
 # gopkg.in/inf.v0 v0.9.1
 ## explicit
 gopkg.in/inf.v0

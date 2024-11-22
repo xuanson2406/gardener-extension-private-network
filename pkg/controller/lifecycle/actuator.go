@@ -109,15 +109,11 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 		}
 		return fmt.Errorf("load balancer %s is not ACTIVE, current provisioning status: %s", loadbalancer.ID, loadbalancer.ProvisioningStatus)
 	}
-	if extSpec.PrivateCluster {
-		extState.AddressLoadBalancer = &loadbalancer.VipAddress
-	} else {
-		fip, err := helper.GetFloatingIPLoadbalancer(privateNetworkConfig, loadbalancer)
-		if err != nil {
-			return err
-		}
-		extState.AddressLoadBalancer = fip
+	floatIP, err := helper.AttachFloatingIP(loadbalancer, privateNetworkConfig, ex)
+	if err != nil {
+		return fmt.Errorf("error to attach floating IP for LB [ID=%s]: [%v]", loadbalancer.ID, err)
 	}
+	extState.AddressLoadBalancer = &floatIP
 	return a.updateStatus(ctx, ex, extState)
 }
 
