@@ -47,8 +47,13 @@ type NetworkWorker struct {
 }
 
 type Networks struct {
-	ID     string `json:"id"`
-	Worker string `json:"workers"`
+	ID           string       `json:"id"`
+	FloatingPool FloatingPool `json:"floatingPool"`
+}
+
+type FloatingPool struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
 }
 
 type PrivateNetworkConfig struct {
@@ -77,8 +82,8 @@ func GetGlobalConfigforPrivateNetwork(
 		return nil, err
 	}
 	netSpec := NetworkWorker{}
-	if infra.Spec.ProviderConfig != nil && infra.Spec.ProviderConfig.Raw != nil {
-		if err := json.Unmarshal(infra.Spec.ProviderConfig.Raw, &netSpec); err != nil {
+	if infra.Status.ProviderStatus != nil && infra.Status.ProviderStatus.Raw != nil {
+		if err := json.Unmarshal(infra.Status.ProviderStatus.Raw, &netSpec); err != nil {
 			return nil, err
 		}
 	}
@@ -109,7 +114,7 @@ func GetGlobalConfigforPrivateNetwork(
 		Region:            cfg.Global.Region,
 		WorkerNetworkID:   netSpec.Network.ID,
 		IstioSubnetID:     cfg.LoadBalancer.SubnetID,
-		FloatingNetworkId: cfg.LoadBalancer.FloatingNetworkID,
+		FloatingNetworkId: netSpec.Network.FloatingPool.ID,
 		FlavorID:          flavorID,
 	}
 	return config, nil

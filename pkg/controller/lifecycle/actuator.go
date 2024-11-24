@@ -100,7 +100,7 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 	}
 	if loadbalancer.ProvisioningStatus != activeStatus {
 		if loadbalancer.ProvisioningStatus == errorStatus {
-			err := helper.DeleteLoadbalancer(privateNetworkConfig, loadbalancer, false)
+			err := helper.DeleteLoadbalancer(privateNetworkConfig, loadbalancer, true)
 			if err != nil {
 				return fmt.Errorf("error to delete the error Loadbalancer [ID=%s] [Name=%s]: [%v]", loadbalancer.ID, loadbalancer.Name, err)
 			}
@@ -138,7 +138,7 @@ func (a *actuator) Delete(ctx context.Context, log logr.Logger, ex *extensionsv1
 		}
 		return nil
 	}
-	return helper.DeleteLoadbalancer(privateNetworkConfig, loadbalancer, false)
+	return helper.DeleteLoadbalancer(privateNetworkConfig, loadbalancer, true)
 }
 
 // Restore the Extension resource.

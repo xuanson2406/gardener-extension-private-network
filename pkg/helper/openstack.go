@@ -374,10 +374,6 @@ func CreateLoadBalancer(ctx context.Context,
 		return nil, fmt.Errorf("Error creating Loadbalancer for Private Network: [%v]", err)
 	}
 
-	// floatIP, err := attachFloatingIP(clientLB, clientNetwork, lb, config, extension)
-	// if err != nil{
-	// 	return
-	// }
 	return lb, nil
 }
 
