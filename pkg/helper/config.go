@@ -43,30 +43,30 @@ type Config struct {
 }
 
 type NetworkWorker struct {
-	Network Networks `json:"networks"`
+	Network          Networks `json:"networks"`
+	FloatingPoolName string   `json:"floatingPoolName"`
 }
 
 type Networks struct {
-	ID           string       `json:"id"`
-	FloatingPool FloatingPool `json:"floatingPool"`
+	ID      string `json:"id"`
+	Workers string `json:"workers"`
 }
 
-type FloatingPool struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
+type AuthOpt struct {
+	Endpoint   string
+	Username   string
+	Password   string
+	DomainName string
+	TenantID   string
+	Region     string
 }
 
 type PrivateNetworkConfig struct {
-	Endpoint          string
-	Username          string
-	Password          string
-	DomainName        string
-	TenantID          string
-	Region            string
-	WorkerNetworkID   string
-	IstioSubnetID     string
-	FlavorID          string
-	FloatingNetworkId string
+	AuthOpt          AuthOpt
+	WorkerNetwork    Networks
+	IstioSubnetID    string
+	FlavorID         string
+	FloatingPoolName string
 }
 
 // GetInfrastructureForExtension returns Infrastructure object for an extension object
@@ -77,13 +77,17 @@ func GetGlobalConfigforPrivateNetwork(
 	shootName string,
 ) (*PrivateNetworkConfig, error) {
 
-	infra, err := GetInfrastructureForExtension(ctx, c, extension, shootName)
+	// infra, err := GetInfrastructureForExtension(ctx, c, extension, shootName)
+	// if err != nil {
+	// 	return nil, err
+	// }
+	cluster, err := GetClusterForExtension(ctx, c, extension)
 	if err != nil {
 		return nil, err
 	}
 	netSpec := NetworkWorker{}
-	if infra.Status.ProviderStatus != nil && infra.Status.ProviderStatus.Raw != nil {
-		if err := json.Unmarshal(infra.Status.ProviderStatus.Raw, &netSpec); err != nil {
+	if cluster.Shoot.Spec.Provider.InfrastructureConfig != nil && cluster.Shoot.Spec.Provider.InfrastructureConfig.Raw != nil {
+		if err := json.Unmarshal(cluster.Shoot.Spec.Provider.InfrastructureConfig.Raw, &netSpec); err != nil {
 			return nil, err
 		}
 	}
@@ -106,16 +110,18 @@ func GetGlobalConfigforPrivateNetwork(
 	// 	return nil, err
 	// }
 	config := &PrivateNetworkConfig{
-		Endpoint:          cfg.Global.AuthURL,
-		Username:          cfg.Global.Username,
-		Password:          cfg.Global.Password,
-		DomainName:        cfg.Global.DomainName,
-		TenantID:          cfg.Global.TenantID,
-		Region:            cfg.Global.Region,
-		WorkerNetworkID:   netSpec.Network.ID,
-		IstioSubnetID:     cfg.LoadBalancer.SubnetID,
-		FloatingNetworkId: netSpec.Network.FloatingPool.ID,
-		FlavorID:          flavorID,
+		AuthOpt: AuthOpt{
+			Endpoint:   cfg.Global.AuthURL,
+			Username:   cfg.Global.Username,
+			Password:   cfg.Global.Password,
+			DomainName: cfg.Global.DomainName,
+			TenantID:   cfg.Global.TenantID,
+			Region:     cfg.Global.Region,
+		},
+		WorkerNetwork:    netSpec.Network,
+		IstioSubnetID:    cfg.LoadBalancer.SubnetID,
+		FloatingPoolName: netSpec.FloatingPoolName,
+		FlavorID:         flavorID,
 	}
 	return config, nil
 }

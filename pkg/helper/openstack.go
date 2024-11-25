@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
 	"net/http"
 	"regexp"
 	"strings"
@@ -312,55 +311,61 @@ func WaitActiveAndGetLoadBalancer(client *gophercloud.ServiceClient, loadbalance
 	return loadbalancer, err
 }
 
+func findSubnetByCIDR(clientNetwork *gophercloud.ServiceClient, networkConfig Networks) (*subnets.Subnet, error) {
+	// List all subnets
+	allPages, err := subnets.List(clientNetwork, nil).AllPages()
+	if err != nil {
+		return nil, fmt.Errorf("Failed to list subnets: %v", err)
+	}
+	// Extract subnets
+	allSubnets, err := subnets.ExtractSubnets(allPages)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to extract subnets: %v", err)
+	}
+
+	// Find the subnet ID for the given network ID
+	for _, subnet := range allSubnets {
+		if subnet.NetworkID == networkConfig.ID && subnet.CIDR == networkConfig.Workers {
+			fmt.Printf("Found subnet ID: %s\n", subnet.ID)
+			return &subnet, nil
+		}
+	}
+	return nil, fmt.Errorf("unable to find the match subnet for network ID = %s - %s", networkConfig.ID, networkConfig.Workers)
+}
 func CreateLoadBalancer(ctx context.Context,
 	config *PrivateNetworkConfig,
 	extension *extensionsv1alpha1.Extension,
 	istioVIP []string,
 	nameLoadbalancer string) (*loadbalancers.LoadBalancer, error) {
-	var workerSubnetID string
 	provider, err := InitialClientOpenstack(config)
 	if err != nil {
 		return nil, err
 	}
 	// Initialize the networking client
 	clientNetwork, err := openstack.NewNetworkV2(provider, gophercloud.EndpointOpts{
-		Region: config.Region, // Replace with your region
+		Region: config.AuthOpt.Region, // Replace with your region
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network client: %v", err)
 	}
 	// Initialize the Loadbalancer client
 	clientLB, err := openstack.NewLoadBalancerV2(provider, gophercloud.EndpointOpts{
-		Region: config.Region, // Replace with your OpenStack region
+		Region: config.AuthOpt.Region, // Replace with your OpenStack region
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network client: %v", err)
 	}
-	// List all subnets
-	allPages, err := subnets.List(clientNetwork, nil).AllPages()
+	subnetWorker, err := findSubnetByCIDR(clientNetwork, config.WorkerNetwork)
 	if err != nil {
-		log.Fatalf("Failed to list subnets: %v", err)
-	}
-	// Extract subnets
-	allSubnets, err := subnets.ExtractSubnets(allPages)
-	if err != nil {
-		log.Fatalf("Failed to extract subnets: %v", err)
-	}
-
-	// Find the subnet ID for the given network ID
-	for _, subnet := range allSubnets {
-		if subnet.NetworkID == config.WorkerNetworkID {
-			fmt.Printf("Found subnet ID: %s\n", subnet.ID)
-			workerSubnetID = subnet.ID
-		}
+		return nil, err
 	}
 	createOpts := loadbalancers.CreateOpts{
 		Name:         nameLoadbalancer,
 		Description:  fmt.Sprintf("Loadbalancer for private network cluster"),
 		Provider:     "amphora",
 		FlavorID:     config.FlavorID,
-		VipNetworkID: config.WorkerNetworkID,
-		VipSubnetID:  workerSubnetID,
+		VipNetworkID: config.WorkerNetwork.ID,
+		VipSubnetID:  subnetWorker.ID,
 	}
 	listener_443 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, 443)
 	listener_8443 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, 8443)
@@ -415,11 +420,11 @@ func buildListeners(name, poolMemberSubnetID string, vipLBistio []string, protoc
 
 func InitialClientOpenstack(config *PrivateNetworkConfig) (*gophercloud.ProviderClient, error) {
 	opts := gophercloud.AuthOptions{
-		IdentityEndpoint: config.Endpoint,
-		Username:         config.Username,
-		Password:         config.Password,
-		DomainName:       config.DomainName,
-		TenantID:         config.TenantID,
+		IdentityEndpoint: config.AuthOpt.Endpoint,
+		Username:         config.AuthOpt.Username,
+		Password:         config.AuthOpt.Password,
+		DomainName:       config.AuthOpt.DomainName,
+		TenantID:         config.AuthOpt.TenantID,
 	}
 
 	provider, err := openstack.AuthenticatedClient(opts)
@@ -436,7 +441,7 @@ func GetFloatingIPLoadbalancer(config *PrivateNetworkConfig, lb *loadbalancers.L
 		return nil, fmt.Errorf("Failed to create provider for get Floating IP of LB [ID=%s]: [%v]", lb.ID, err)
 	}
 	networkClient, err := openstack.NewNetworkV2(provider, gophercloud.EndpointOpts{
-		Region: config.Region,
+		Region: config.AuthOpt.Region,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("Failed to create networking client: %v", err)
@@ -470,7 +475,7 @@ func GetLoadbalancerByName(config *PrivateNetworkConfig, name string) (*loadbala
 	}
 	// Initialize the Loadbalancer client
 	clientLB, err := openstack.NewLoadBalancerV2(provider, gophercloud.EndpointOpts{
-		Region: config.Region,
+		Region: config.AuthOpt.Region,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to create network client: %v", err)
@@ -528,7 +533,7 @@ func DeleteLoadbalancer(config *PrivateNetworkConfig, loadbalancer *loadbalancer
 	}
 	// Initialize the Loadbalancer client
 	clientLB, err := openstack.NewLoadBalancerV2(provider, gophercloud.EndpointOpts{
-		Region: config.Region,
+		Region: config.AuthOpt.Region,
 	})
 	if err != nil {
 		return fmt.Errorf("failed to create network client: %v", err)
@@ -614,7 +619,7 @@ func AttachFloatingIP(lb *loadbalancers.LoadBalancer,
 	}
 	// Initialize the networking client
 	clientNetwork, err := openstack.NewNetworkV2(provider, gophercloud.EndpointOpts{
-		Region: config.Region, // Replace with your region
+		Region: config.AuthOpt.Region, // Replace with your region
 	})
 	if err != nil {
 		return "", fmt.Errorf("failed to create network client: %v", err)
@@ -644,7 +649,7 @@ func AttachFloatingIP(lb *loadbalancers.LoadBalancer,
 		return lb.VipAddress, nil
 	}
 	if floatIP == nil {
-		klog.Infof("Checking floating IP for loadbalancer %s in poolID %s", lb.ID, config.FloatingNetworkId)
+		klog.Infof("Checking floating IP for loadbalancer %s in floating pool name %s", lb.ID, config.FloatingPoolName)
 		networkLB, err := networks.Get(clientNetwork, config.WorkerNetworkID).Extract()
 		if err != nil {
 			return "", fmt.Errorf("failed to get network of Loadbalancer for finding floating ip with ID '%s': %v", config.WorkerNetworkID, err)
