@@ -35,7 +35,9 @@ const (
 	activeStatus                        = "ACTIVE"
 	errorStatus                         = "ERROR"
 	defaultLoadBalancerSourceRangesIPv4 = "0.0.0.0/0"
-	prefixLB                            = "private-network"
+	prefixLB                            = "private_network"
+	clusterTypePublic                   = "Public"
+	clusterTypePrivate                  = "Private"
 )
 
 // NewActuator returns an actuator responsible for Extension resources.
@@ -57,12 +59,14 @@ type actuator struct {
 
 // ExtensionState contains the State of the Extension
 type ExtensionState struct {
-	AddressLoadBalancer *string `json:"addressLoadBalancer"`
+	InternalAddressLoadBalancer *string `json:"internalAddressLoadBalancer"`
+	ExternalAddressLoadBalancer *string `json:"externalAddressLoadBalancer"`
+	ClusterType                 string  `json:"clusterType"`
 }
 
 // Reconcile the Extension resource.
 func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extensionsv1alpha1.Extension) error {
-	a.logger.Info("Hello World, I just entered the Reconcile method")
+	// a.logger.Info("Hello World, I just entered the Reconcile method")
 	nameLB := fmt.Sprintf("%s-%s", prefixLB, ex.Namespace)
 	var loadbalancer *loadbalancers.LoadBalancer
 	cluster, err := helper.GetClusterForExtension(ctx, a.client, ex)
@@ -113,7 +117,15 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 	if err != nil {
 		return fmt.Errorf("error to attach floating IP for LB [ID=%s]: [%v]", loadbalancer.ID, err)
 	}
-	extState.AddressLoadBalancer = &floatIP
+	if extSpec.PrivateCluster {
+		extState.ClusterType = clusterTypePrivate
+		extState.InternalAddressLoadBalancer = &loadbalancer.VipAddress
+		extState.ExternalAddressLoadBalancer = nil
+	} else {
+		extState.ClusterType = clusterTypePublic
+		extState.InternalAddressLoadBalancer = &loadbalancer.VipAddress
+		extState.ExternalAddressLoadBalancer = &floatIP
+	}
 	return a.updateStatus(ctx, ex, extState)
 }
 

@@ -21,6 +21,7 @@ import (
 	v2pools "github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/pools"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/floatingips"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/portforwarding"
+	"github.com/gophercloud/gophercloud/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/subnets"
 	"gopkg.in/godo.v2/glob"
 	"k8s.io/apimachinery/pkg/util/wait"
@@ -326,14 +327,14 @@ func CreateLoadBalancer(ctx context.Context,
 		Region: config.Region, // Replace with your region
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Failed to create network client: %v", err)
+		return nil, fmt.Errorf("failed to create network client: %v", err)
 	}
 	// Initialize the Loadbalancer client
 	clientLB, err := openstack.NewLoadBalancerV2(provider, gophercloud.EndpointOpts{
 		Region: config.Region, // Replace with your OpenStack region
 	})
 	if err != nil {
-		return nil, fmt.Errorf("Failed to create network client: %v", err)
+		return nil, fmt.Errorf("failed to create network client: %v", err)
 	}
 	// List all subnets
 	allPages, err := subnets.List(clientNetwork, nil).AllPages()
@@ -361,9 +362,9 @@ func CreateLoadBalancer(ctx context.Context,
 		VipNetworkID: config.WorkerNetworkID,
 		VipSubnetID:  workerSubnetID,
 	}
-	listener_443 := buildListeners(nameLoadbalancer, workerSubnetID, istioVIP, 443)
-	listener_8443 := buildListeners(nameLoadbalancer, workerSubnetID, istioVIP, 8443)
-	listener_8132 := buildListeners(nameLoadbalancer, workerSubnetID, istioVIP, 8132)
+	listener_443 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, 443)
+	listener_8443 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, 8443)
+	listener_8132 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, 8132)
 	createOpts.Listeners = append(createOpts.Listeners, listener_443, listener_8443, listener_8132)
 	lb, err := loadbalancers.Create(clientLB, createOpts).Extract()
 	if err != nil {
@@ -371,7 +372,7 @@ func CreateLoadBalancer(ctx context.Context,
 	}
 	lb, err = WaitActiveAndGetLoadBalancer(clientLB, lb.ID)
 	if err != nil {
-		return nil, fmt.Errorf("Error creating Loadbalancer for Private Network: [%v]", err)
+		return nil, fmt.Errorf("error creating Loadbalancer for Private Network: [%v]", err)
 	}
 
 	return lb, nil
@@ -630,7 +631,7 @@ func AttachFloatingIP(lb *loadbalancers.LoadBalancer,
 		return "", fmt.Errorf("failed when getting floating IP for port %s: %v", portID, err)
 	}
 	if floatIP != nil {
-		klog.V(4).Infof("Found floating ip %v by loadbalancer port id %q", floatIP, portID)
+		klog.Infof("Found floating ip %v by loadbalancer port id %q", floatIP, portID)
 	}
 	if extSpec.PrivateCluster {
 		if floatIP != nil {
@@ -643,12 +644,16 @@ func AttachFloatingIP(lb *loadbalancers.LoadBalancer,
 		return lb.VipAddress, nil
 	}
 	if floatIP == nil {
-		klog.V(2).Infof("Checking floating IP for loadbalancer %s in poolID %s", lb.ID, config.FloatingNetworkId)
+		klog.Infof("Checking floating IP for loadbalancer %s in poolID %s", lb.ID, config.FloatingNetworkId)
+		networkLB, err := networks.Get(clientNetwork, config.WorkerNetworkID).Extract()
+		if err != nil {
+			return "", fmt.Errorf("failed to get network of Loadbalancer for finding floating ip with ID '%s': %v", config.WorkerNetworkID, err)
+		}
 		opts := floatingips.ListOpts{
 			FloatingNetworkID: config.FloatingNetworkId,
 			Status:            "DOWN",
 			PortID:            "",
-			ProjectID:         lb.ProjectID,
+			ProjectID:         networkLB.ProjectID,
 		}
 		availableIPs, err := getFloatingIPs(clientNetwork, opts)
 		if err != nil {
@@ -674,12 +679,17 @@ func AttachFloatingIP(lb *loadbalancers.LoadBalancer,
 			}
 		}
 		if floatIP == nil {
-			var lbPublicSubnetSpec *floatingSubnetSpec
+			lbPublicSubnetSpec := &floatingSubnetSpec{
+				subnetID:   "",
+				subnet:     "",
+				subnetTags: "",
+			}
 			klog.V(2).Infof("Creating floating IP for loadbalancer %s", lb.ID)
 			floatIPOpts := floatingips.CreateOpts{
 				FloatingNetworkID: config.FloatingNetworkId,
 				PortID:            portID,
 				Description:       fmt.Sprintf("Floating IP for Private Kubernetes Cluster service from cluster %s", ex.Namespace),
+				ProjectID:         networkLB.ProjectID,
 			}
 			var foundSubnet subnets.Subnet
 			// tweak list options for tags

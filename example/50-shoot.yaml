@@ -109,3 +109,5 @@ spec:
         mode: horizontal
   extensions:
     - type: private-network
+      providerConfig:
+        privateCluster: false

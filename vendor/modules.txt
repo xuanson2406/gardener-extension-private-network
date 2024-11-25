@@ -247,6 +247,7 @@ github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/monitors
 github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/pools
 github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/floatingips
 github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/portforwarding
+github.com/gophercloud/gophercloud/openstack/networking/v2/networks
 github.com/gophercloud/gophercloud/openstack/networking/v2/subnets
 github.com/gophercloud/gophercloud/openstack/utils
 github.com/gophercloud/gophercloud/pagination
