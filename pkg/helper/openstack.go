@@ -650,19 +650,23 @@ func AttachFloatingIP(lb *loadbalancers.LoadBalancer,
 	}
 	if floatIP == nil {
 		klog.Infof("Checking floating IP for loadbalancer %s in floating pool name %s", lb.ID, config.FloatingPoolName)
-		networkLB, err := networks.Get(clientNetwork, config.WorkerNetworkID).Extract()
+		networkLB, err := networks.Get(clientNetwork, config.WorkerNetwork.ID).Extract()
 		if err != nil {
-			return "", fmt.Errorf("failed to get network of Loadbalancer for finding floating ip with ID '%s': %v", config.WorkerNetworkID, err)
+			return "", fmt.Errorf("failed to get network of Loadbalancer for finding floating ip with ID '%s': %v", config.WorkerNetwork.ID, err)
+		}
+		FloatingNetwork, err := getNetworkByName(clientNetwork, config.FloatingPoolName)
+		if err != nil {
+			return "", err
 		}
 		opts := floatingips.ListOpts{
-			FloatingNetworkID: config.FloatingNetworkId,
+			FloatingNetworkID: FloatingNetwork.ID,
 			Status:            "DOWN",
 			PortID:            "",
 			ProjectID:         networkLB.ProjectID,
 		}
 		availableIPs, err := getFloatingIPs(clientNetwork, opts)
 		if err != nil {
-			return "", fmt.Errorf("failed when trying to get available floating IP in pool %s, error: %v", config.FloatingNetworkId, err)
+			return "", fmt.Errorf("failed when trying to get available floating IP in pool %s, error: %v", FloatingNetwork.ID, err)
 		}
 		if len(availableIPs) > 0 {
 			for _, fip := range availableIPs {
@@ -691,24 +695,23 @@ func AttachFloatingIP(lb *loadbalancers.LoadBalancer,
 			}
 			klog.V(2).Infof("Creating floating IP for loadbalancer %s", lb.ID)
 			floatIPOpts := floatingips.CreateOpts{
-				FloatingNetworkID: config.FloatingNetworkId,
+				FloatingNetworkID: FloatingNetwork.ID,
 				PortID:            portID,
 				Description:       fmt.Sprintf("Floating IP for Private Kubernetes Cluster service from cluster %s", ex.Namespace),
 				ProjectID:         networkLB.ProjectID,
 			}
 			var foundSubnet subnets.Subnet
 			// tweak list options for tags
-			foundSubnets, err := lbPublicSubnetSpec.ListSubnetsForNetwork(clientNetwork, config.FloatingNetworkId)
+			foundSubnets, err := lbPublicSubnetSpec.ListSubnetsForNetwork(clientNetwork, FloatingNetwork.ID)
 			if err != nil {
 				return "", err
 			}
 			if len(foundSubnets) == 0 {
-				return "", fmt.Errorf("no subnet matching found for network %s",
-					config.FloatingNetworkId)
+				return "", fmt.Errorf("no subnet matching found for network %s", FloatingNetwork.ID)
 			}
 
 			// try to create floating IP in matching subnets (tags already filtered by list options)
-			klog.V(4).Infof("found %d subnets matching for network %s", len(foundSubnets), config.FloatingNetworkId)
+			klog.V(4).Infof("found %d subnets matching for network %s", len(foundSubnets), FloatingNetwork.ID)
 			for _, subnet := range foundSubnets {
 				floatIPOpts.SubnetID = subnet.ID
 				floatIP, err = createFloatingIP(clientNetwork, fmt.Sprintf("Trying subnet %s for creating", subnet.Name), floatIPOpts)
@@ -719,7 +722,7 @@ func AttachFloatingIP(lb *loadbalancers.LoadBalancer,
 				klog.V(2).Infof("cannot use subnet %s: %s", subnet.Name, err)
 			}
 			if err != nil {
-				return "", fmt.Errorf("no free subnet matching found for network %s (last error %s)", config.FloatingNetworkId, err)
+				return "", fmt.Errorf("no free subnet matching found for network %s (last error %s)", FloatingNetwork.ID, err)
 			}
 			klog.V(2).Infof("Successfully created floating IP %s for loadbalancer %s on subnet %s(%s)", floatIP.FloatingIP, lb.ID, foundSubnet.Name, foundSubnet.ID)
 		}
@@ -785,4 +788,21 @@ func createFloatingIP(netClient *gophercloud.ServiceClient, msg string, floatIPO
 		return floatIP, fmt.Errorf("error creating LB floatingip: %s", err)
 	}
 	return floatIP, err
+}
+
+func getNetworkByName(netClient *gophercloud.ServiceClient, name string) (*networks.Network, error) {
+	allPages, err := networks.List(netClient, networks.ListOpts{Name: name}).AllPages()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list networks: %v", err)
+	}
+
+	allNetworks, err := networks.ExtractNetworks(allPages)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to extract networks: %v", err)
+	}
+
+	if len(allNetworks) == 0 {
+		return nil, fmt.Errorf("Not Found network name %s", name)
+	}
+	return &allNetworks[0], nil
 }
