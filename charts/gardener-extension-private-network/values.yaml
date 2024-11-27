@@ -10,7 +10,7 @@ image:
   imagePullSecrets: regcred
 
 serviceName: private-network
-replicaCount: 1
+replicaCount: 2
 ignoreResources: false
 
 controllers:
@@ -22,3 +22,8 @@ controllers:
 
 gardener:
   version: ""
+
+resources:
+  requests:
+    cpu: "80m"
+    memory: "128Mi"

@@ -287,17 +287,17 @@ func WaitActiveAndGetLoadBalancer(client *gophercloud.ServiceClient, loadbalance
 
 	var loadbalancer *loadbalancers.LoadBalancer
 	err := wait.ExponentialBackoff(backoff, func() (bool, error) {
-		fmt.Printf("Load balancer lbID %s", loadbalancerID)
+		klog.Infof("Load balancer lbID %s", loadbalancerID)
 		var err error
 		loadbalancer, err = loadbalancers.Get(client, loadbalancerID).Extract()
 		if err != nil {
 			return false, err
 		}
 		if loadbalancer.ProvisioningStatus == activeStatus {
-			fmt.Printf("Load balancer ACTIVE lbID %s", loadbalancerID)
+			klog.Infof("Load balancer ACTIVE lbID %s", loadbalancerID)
 			return true, nil
 		} else if loadbalancer.ProvisioningStatus == errorStatus {
-			return true, fmt.Errorf("loadbalancer has gone into ERROR state")
+			return true, fmt.Errorf("Loadbalancer [ID=%s] has gone into ERROR state", loadbalancerID)
 		} else {
 			return false, nil
 		}
@@ -305,7 +305,7 @@ func WaitActiveAndGetLoadBalancer(client *gophercloud.ServiceClient, loadbalance
 	})
 
 	if wait.Interrupted(err) {
-		err = fmt.Errorf("timeout waiting for the loadbalancer %s %s", loadbalancerID, activeStatus)
+		err = fmt.Errorf("timeout waiting for the loadbalancer %s reach %s state ", loadbalancerID, activeStatus)
 	}
 
 	return loadbalancer, err
@@ -336,7 +336,8 @@ func CreateLoadBalancer(ctx context.Context,
 	config *PrivateNetworkConfig,
 	extension *extensionsv1alpha1.Extension,
 	istioVIP []string,
-	nameLoadbalancer string) (*loadbalancers.LoadBalancer, error) {
+	nameLoadbalancer string,
+	lbSourceRangesIPv4 []string) (*loadbalancers.LoadBalancer, error) {
 	provider, err := InitialClientOpenstack(config)
 	if err != nil {
 		return nil, err
@@ -367,9 +368,9 @@ func CreateLoadBalancer(ctx context.Context,
 		VipNetworkID: config.WorkerNetwork.ID,
 		VipSubnetID:  subnetWorker.ID,
 	}
-	listener_443 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, 443)
-	listener_8443 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, 8443)
-	listener_8132 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, 8132)
+	listener_443 := buildListeners(nameLoadbalancer, config.IstioSubnetID, lbSourceRangesIPv4, istioVIP, 443)
+	listener_8443 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, lbSourceRangesIPv4, 8443)
+	listener_8132 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, lbSourceRangesIPv4, 8132)
 	createOpts.Listeners = append(createOpts.Listeners, listener_443, listener_8443, listener_8132)
 	lb, err := loadbalancers.Create(clientLB, createOpts).Extract()
 	if err != nil {
@@ -383,11 +384,12 @@ func CreateLoadBalancer(ctx context.Context,
 	return lb, nil
 }
 
-func buildListeners(name, poolMemberSubnetID string, vipLBistio []string, protocolPort int) listeners.CreateOpts {
+func buildListeners(name, poolMemberSubnetID string, vipLBistio, lbSourceRangesIPv4 []string, protocolPort int) listeners.CreateOpts {
 	listenerCreateOpt := listeners.CreateOpts{
 		Name:         fmt.Sprintf("%s-%d", name, protocolPort),
 		Protocol:     listeners.Protocol("TCP"),
 		ProtocolPort: protocolPort,
+		AllowedCIDRs: lbSourceRangesIPv4,
 	}
 	var members []v2pools.BatchUpdateMemberOpts
 	for _, vip := range vipLBistio {
@@ -610,6 +612,7 @@ func IsNotFound(err error) bool {
 	return false
 }
 
+// AttachFloatingIP associate the suitable floatingIP for Loadbalancer and return this fip and error
 func AttachFloatingIP(lb *loadbalancers.LoadBalancer,
 	config *PrivateNetworkConfig,
 	ex *extensionsv1alpha1.Extension) (string, error) {
@@ -672,14 +675,15 @@ func AttachFloatingIP(lb *loadbalancers.LoadBalancer,
 			for _, fip := range availableIPs {
 				allPages, err := portforwarding.List(clientNetwork, portforwarding.ListOpts{}, fip.ID).AllPages()
 				if err != nil {
-					panic(err)
+					return "", fmt.Errorf("failed when trying to list port forwarding of floating IP in pool %s, error: %v", FloatingNetwork.ID, err)
 				}
 
 				allPFs, err := portforwarding.ExtractPortForwardings(allPages)
 				if err != nil {
-					panic(err)
+					return "", err
 				}
 				if len(fip.PortID) == 0 && len(allPFs) == 0 { // Checking fip has no port forwarding to available for associate to LB
+					fip.Description = fmt.Sprintf("Floating IP for Private Kubernetes Cluster service from cluster %s", ex.Namespace)
 					floatIP, err = updateFloatingIP(clientNetwork, &fip, &lb.VipPortID)
 					if err != nil {
 						return "", err
@@ -781,8 +785,9 @@ func getFloatingIPByPortID(client *gophercloud.ServiceClient, portID string) (*f
 	return &ips[0], nil
 }
 
+// createFloatingIP create a new floating ip in VPC with specified CreateOpts
 func createFloatingIP(netClient *gophercloud.ServiceClient, msg string, floatIPOpts floatingips.CreateOpts) (*floatingips.FloatingIP, error) {
-	klog.V(4).Infof("%s floating ip with opts %+v", msg, floatIPOpts)
+	klog.Infof("%s floating ip with opts %+v", msg, floatIPOpts)
 	floatIP, err := floatingips.Create(netClient, floatIPOpts).Extract()
 	if err != nil {
 		return floatIP, fmt.Errorf("error creating LB floatingip: %s", err)
@@ -790,6 +795,7 @@ func createFloatingIP(netClient *gophercloud.ServiceClient, msg string, floatIPO
 	return floatIP, err
 }
 
+// getNetworkByName get the network resource in openstack by name of network, used for case to find provider-network by name
 func getNetworkByName(netClient *gophercloud.ServiceClient, name string) (*networks.Network, error) {
 	allPages, err := networks.List(netClient, networks.ListOpts{Name: name}).AllPages()
 	if err != nil {
@@ -798,11 +804,11 @@ func getNetworkByName(netClient *gophercloud.ServiceClient, name string) (*netwo
 
 	allNetworks, err := networks.ExtractNetworks(allPages)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to extract networks: %v", err)
+		return nil, fmt.Errorf("failed to extract networks: %v", err)
 	}
 
 	if len(allNetworks) == 0 {
-		return nil, fmt.Errorf("Not Found network name %s", name)
+		return nil, fmt.Errorf("not found network name %s", name)
 	}
 	return &allNetworks[0], nil
 }

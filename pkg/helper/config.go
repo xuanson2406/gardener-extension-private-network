@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/gardener/gardener-extension-private-network/pkg/extensionspec"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"gopkg.in/gcfg.v1"
 	v1 "k8s.io/api/core/v1"
@@ -77,10 +78,6 @@ func GetGlobalConfigforPrivateNetwork(
 	shootName string,
 ) (*PrivateNetworkConfig, error) {
 
-	// infra, err := GetInfrastructureForExtension(ctx, c, extension, shootName)
-	// if err != nil {
-	// 	return nil, err
-	// }
 	cluster, err := GetClusterForExtension(ctx, c, extension)
 	if err != nil {
 		return nil, err
@@ -124,4 +121,11 @@ func GetGlobalConfigforPrivateNetwork(
 		FlavorID:         flavorID,
 	}
 	return config, nil
+}
+
+func BuildLBSourceRangesIPv4(ctx context.Context, extSpec *extensionspec.ExtensionSpec, config *PrivateNetworkConfig) []string {
+	var allowRangesIPv4 []string
+	allowRangesIPv4 = append(allowRangesIPv4, config.WorkerNetwork.Workers)
+	allowRangesIPv4 = append(allowRangesIPv4, extSpec.AlowCIDRs...)
+	return allowRangesIPv4
 }

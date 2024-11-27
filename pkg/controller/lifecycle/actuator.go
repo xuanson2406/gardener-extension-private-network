@@ -67,8 +67,11 @@ type ExtensionState struct {
 // Reconcile the Extension resource.
 func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extensionsv1alpha1.Extension) error {
 	// a.logger.Info("Hello World, I just entered the Reconcile method")
+	var (
+		loadbalancer    *loadbalancers.LoadBalancer
+		allowRangeCIDRs []string
+	)
 	nameLB := fmt.Sprintf("%s-%s", prefixLB, ex.Namespace)
-	var loadbalancer *loadbalancers.LoadBalancer
 	cluster, err := helper.GetClusterForExtension(ctx, a.client, ex)
 	if err != nil {
 		return err
@@ -91,13 +94,18 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 	if err != nil {
 		return fmt.Errorf("error to get private network configuration for shoot %s: [%v]", cluster.Shoot.Name, err)
 	}
+	if extSpec.AlowCIDRs != nil {
+		allowRangeCIDRs = helper.BuildLBSourceRangesIPv4(ctx, extSpec, privateNetworkConfig)
+	} else {
+		allowRangeCIDRs = append(allowRangeCIDRs, defaultLoadBalancerSourceRangesIPv4)
+	}
 	loadbalancer, err = helper.GetLoadbalancerByName(privateNetworkConfig, nameLB)
 	if err != nil {
 		if err != helper.ErrNotFound {
 			return fmt.Errorf("error getting loadbalancer for extension %s: [%v]", ex.Namespace, err)
 		}
 		klog.InfoS("Creating loadbalancer", "lbName", nameLB, "extension", klog.KObj(ex))
-		loadbalancer, err = helper.CreateLoadBalancer(ctx, privateNetworkConfig, ex, vipLBistio, nameLB)
+		loadbalancer, err = helper.CreateLoadBalancer(ctx, privateNetworkConfig, ex, vipLBistio, nameLB, allowRangeCIDRs)
 		if err != nil {
 			return err
 		}
