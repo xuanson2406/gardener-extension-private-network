@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"regexp"
 	"strings"
 	"time"
@@ -14,6 +15,7 @@ import (
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"github.com/gophercloud/gophercloud"
 	"github.com/gophercloud/gophercloud/openstack"
+	"github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/flavors"
 	"github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/listeners"
 	"github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/loadbalancers"
 	v2monitors "github.com/gophercloud/gophercloud/openstack/loadbalancer/v2/monitors"
@@ -337,7 +339,7 @@ func CreateLoadBalancer(ctx context.Context,
 	extension *extensionsv1alpha1.Extension,
 	istioVIP []string,
 	nameLoadbalancer string,
-	lbSourceRangesIPv4 []string) (*loadbalancers.LoadBalancer, error) {
+	lbSourceRangesIPv4 IPNet) (*loadbalancers.LoadBalancer, error) {
 	provider, err := InitialClientOpenstack(config)
 	if err != nil {
 		return nil, err
@@ -360,15 +362,19 @@ func CreateLoadBalancer(ctx context.Context,
 	if err != nil {
 		return nil, err
 	}
+	flavorLBID, err := getFlavorIDByType(clientLB, config.FlavorType)
+	if err != nil {
+		return nil, err
+	}
 	createOpts := loadbalancers.CreateOpts{
 		Name:         nameLoadbalancer,
 		Description:  fmt.Sprintf("Loadbalancer for private network cluster"),
 		Provider:     "amphora",
-		FlavorID:     config.FlavorID,
+		FlavorID:     flavorLBID,
 		VipNetworkID: config.WorkerNetwork.ID,
 		VipSubnetID:  subnetWorker.ID,
 	}
-	listener_443 := buildListeners(nameLoadbalancer, config.IstioSubnetID, lbSourceRangesIPv4, istioVIP, 443)
+	listener_443 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, lbSourceRangesIPv4, 443)
 	listener_8443 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, lbSourceRangesIPv4, 8443)
 	listener_8132 := buildListeners(nameLoadbalancer, config.IstioSubnetID, istioVIP, lbSourceRangesIPv4, 8132)
 	createOpts.Listeners = append(createOpts.Listeners, listener_443, listener_8443, listener_8132)
@@ -384,12 +390,12 @@ func CreateLoadBalancer(ctx context.Context,
 	return lb, nil
 }
 
-func buildListeners(name, poolMemberSubnetID string, vipLBistio, lbSourceRangesIPv4 []string, protocolPort int) listeners.CreateOpts {
+func buildListeners(name, poolMemberSubnetID string, vipLBistio []string, lbSourceRangesIPv4 IPNet, protocolPort int) listeners.CreateOpts {
 	listenerCreateOpt := listeners.CreateOpts{
 		Name:         fmt.Sprintf("%s-%d", name, protocolPort),
 		Protocol:     listeners.Protocol("TCP"),
 		ProtocolPort: protocolPort,
-		AllowedCIDRs: lbSourceRangesIPv4,
+		AllowedCIDRs: lbSourceRangesIPv4.StringSlice(),
 	}
 	var members []v2pools.BatchUpdateMemberOpts
 	for _, vip := range vipLBistio {
@@ -811,4 +817,59 @@ func getNetworkByName(netClient *gophercloud.ServiceClient, name string) (*netwo
 		return nil, fmt.Errorf("not found network name %s", name)
 	}
 	return &allNetworks[0], nil
+}
+
+func CheckLoadBalancer(ctx context.Context,
+	lb *loadbalancers.LoadBalancer,
+	config *PrivateNetworkConfig,
+	allowRangeCIDRs IPNet) (*loadbalancers.LoadBalancer, error) {
+	provider, err := InitialClientOpenstack(config)
+	if err != nil {
+		return lb, err
+	}
+	// Initialize the loadbalancer client
+	clientLB, err := openstack.NewLoadBalancerV2(provider, gophercloud.EndpointOpts{
+		Region: config.AuthOpt.Region, // Replace with your region
+	})
+	if err != nil {
+		return lb, fmt.Errorf("failed to create loadbalancer client: %v", err)
+	}
+	listenerAllowedCIDRs := allowRangeCIDRs.StringSlice()
+	listerners := lb.Listeners
+	for _, listener := range listerners {
+		if len(listenerAllowedCIDRs) > 0 && !reflect.DeepEqual(listener.AllowedCIDRs, listenerAllowedCIDRs) {
+			_, err := listeners.Update(clientLB, listener.ID, listeners.UpdateOpts{
+				AllowedCIDRs: &listenerAllowedCIDRs,
+			}).Extract()
+			if err != nil {
+				return lb, fmt.Errorf("failed to update listener allowed CIDRs: %v", err)
+			}
+
+			klog.Infof("listenerID: %s of LB [Name=%s] - listener allowed CIDRs updated", listener.ID, lb.Name)
+		}
+	}
+	lb, err = WaitActiveAndGetLoadBalancer(clientLB, lb.ID)
+	if err != nil {
+		return lb, fmt.Errorf("loadbalancer %s not in ACTIVE status after creating listener, error: %v", lb.ID, err)
+	}
+	return lb, nil
+}
+
+func getFlavorIDByType(clientLB *gophercloud.ServiceClient, typeName string) (string, error) {
+	allPages, err := flavors.List(clientLB, nil).AllPages()
+	if err != nil {
+		return "", fmt.Errorf("Failed to list flavors: %v", err)
+	}
+
+	allFlavors, err := flavors.ExtractFlavors(allPages)
+	if err != nil {
+		return "", fmt.Errorf("Failed to extract flavors: %v", err)
+	}
+
+	for _, flavor := range allFlavors {
+		if flavor.Name == typeName {
+			return flavor.ID, nil
+		}
+	}
+	return "", fmt.Errorf("Not found flavor ID with type %s", typeName)
 }

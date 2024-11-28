@@ -13,9 +13,10 @@ import (
 )
 
 const (
-	secretConfig = "external-openstack-cloud-config"
-	namespace    = "kube-system"
-	flavorID     = "9a36b2e9-11ca-4e68-9093-e48e5cee7367"
+	secretConfig                        = "external-openstack-cloud-config"
+	namespace                           = "kube-system"
+	flavorType                          = "basic"
+	defaultLoadBalancerSourceRangesIPv4 = "0.0.0.0/0"
 )
 
 type Global struct {
@@ -66,7 +67,7 @@ type PrivateNetworkConfig struct {
 	AuthOpt          AuthOpt
 	WorkerNetwork    Networks
 	IstioSubnetID    string
-	FlavorID         string
+	FlavorType       string
 	FloatingPoolName string
 }
 
@@ -118,14 +119,29 @@ func GetGlobalConfigforPrivateNetwork(
 		WorkerNetwork:    netSpec.Network,
 		IstioSubnetID:    cfg.LoadBalancer.SubnetID,
 		FloatingPoolName: netSpec.FloatingPoolName,
-		FlavorID:         flavorID,
+		FlavorType:       flavorType,
 	}
 	return config, nil
 }
 
-func BuildLBSourceRangesIPv4(ctx context.Context, extSpec *extensionspec.ExtensionSpec, config *PrivateNetworkConfig) []string {
-	var allowRangesIPv4 []string
-	allowRangesIPv4 = append(allowRangesIPv4, config.WorkerNetwork.Workers)
-	allowRangesIPv4 = append(allowRangesIPv4, extSpec.AlowCIDRs...)
-	return allowRangesIPv4
+// GetLoadBalancerSourceRanges get the list of Source Ranges IPv4 can be allowed access to Loadbalancer
+func GetLoadBalancerSourceRanges(ctx context.Context, extSpec *extensionspec.ExtensionSpec, config *PrivateNetworkConfig) (IPNet, error) {
+	var (
+		ipnets IPNet
+		err    error
+		specs  []string
+	)
+	if extSpec.AlowCIDRs != nil {
+		specs = extSpec.AlowCIDRs
+		specs = append(specs, config.WorkerNetwork.Workers)
+	} else {
+		specs = append(specs, defaultLoadBalancerSourceRangesIPv4)
+	}
+
+	ipnets, err = ParseIPNets(specs...)
+
+	if err != nil {
+		return nil, fmt.Errorf("extension.Spec.allowCIDRs: %v is not valid. Expecting a list of IP ranges. For example, 10.0.0.0/24. Error msg: %v", specs, err)
+	}
+	return ipnets, nil
 }

@@ -28,16 +28,15 @@ import (
 )
 
 const (
-	deletionTimeout                     = 2 * time.Minute
-	istioGatewayName                    = "kube-apiserver"
-	keyIstio                            = "istio-ingressgateway"
-	namespaceIstioIngress               = "istio-ingress"
-	activeStatus                        = "ACTIVE"
-	errorStatus                         = "ERROR"
-	defaultLoadBalancerSourceRangesIPv4 = "0.0.0.0/0"
-	prefixLB                            = "private_network"
-	clusterTypePublic                   = "Public"
-	clusterTypePrivate                  = "Private"
+	deletionTimeout       = 2 * time.Minute
+	istioGatewayName      = "kube-apiserver"
+	keyIstio              = "istio-ingressgateway"
+	namespaceIstioIngress = "istio-ingress"
+	activeStatus          = "ACTIVE"
+	errorStatus           = "ERROR"
+	prefixLB              = "private_network"
+	clusterTypePublic     = "Public"
+	clusterTypePrivate    = "Private"
 )
 
 // NewActuator returns an actuator responsible for Extension resources.
@@ -66,10 +65,9 @@ type ExtensionState struct {
 
 // Reconcile the Extension resource.
 func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extensionsv1alpha1.Extension) error {
-	// a.logger.Info("Hello World, I just entered the Reconcile method")
 	var (
 		loadbalancer    *loadbalancers.LoadBalancer
-		allowRangeCIDRs []string
+		allowRangeCIDRs helper.IPNet
 	)
 	nameLB := fmt.Sprintf("%s-%s", prefixLB, ex.Namespace)
 	cluster, err := helper.GetClusterForExtension(ctx, a.client, ex)
@@ -94,10 +92,9 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 	if err != nil {
 		return fmt.Errorf("error to get private network configuration for shoot %s: [%v]", cluster.Shoot.Name, err)
 	}
-	if extSpec.AlowCIDRs != nil {
-		allowRangeCIDRs = helper.BuildLBSourceRangesIPv4(ctx, extSpec, privateNetworkConfig)
-	} else {
-		allowRangeCIDRs = append(allowRangeCIDRs, defaultLoadBalancerSourceRangesIPv4)
+	allowRangeCIDRs, err = helper.GetLoadBalancerSourceRanges(ctx, extSpec, privateNetworkConfig)
+	if err != nil {
+		return fmt.Errorf("error to get LB source ranges ipv4 for extension [ns=%s]: [%v]", ex.Namespace, err)
 	}
 	loadbalancer, err = helper.GetLoadbalancerByName(privateNetworkConfig, nameLB)
 	if err != nil {
@@ -120,6 +117,10 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 				ex.Namespace, errorStatus)
 		}
 		return fmt.Errorf("load balancer %s is not ACTIVE, current provisioning status: %s", loadbalancer.ID, loadbalancer.ProvisioningStatus)
+	}
+	loadbalancer, err = helper.CheckLoadBalancer(ctx, loadbalancer, privateNetworkConfig, allowRangeCIDRs)
+	if err != nil {
+		return fmt.Errorf("error to check existed Loadbalancer [Name=%s] in extesion %s: [%v]", nameLB, ex.Namespace, err)
 	}
 	floatIP, err := helper.AttachFloatingIP(loadbalancer, privateNetworkConfig, ex)
 	if err != nil {
