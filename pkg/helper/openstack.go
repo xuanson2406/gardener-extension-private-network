@@ -847,10 +847,10 @@ func CheckLoadBalancer(ctx context.Context,
 
 			klog.Infof("listenerID: %s of LB [Name=%s] - listener allowed CIDRs updated", listener.ID, lb.Name)
 		}
-	}
-	lb, err = WaitActiveAndGetLoadBalancer(clientLB, lb.ID)
-	if err != nil {
-		return lb, fmt.Errorf("loadbalancer %s not in ACTIVE status after creating listener, error: %v", lb.ID, err)
+		lb, err = WaitActiveAndGetLoadBalancer(clientLB, lb.ID)
+		if err != nil {
+			return lb, fmt.Errorf("loadbalancer %s not in ACTIVE status after creating listener, error: %v", lb.ID, err)
+		}
 	}
 	return lb, nil
 }
