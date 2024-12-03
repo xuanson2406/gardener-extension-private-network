@@ -110,4 +110,4 @@ spec:
   extensions:
     - type: private-network
       providerConfig:
-        privateCluster: false
+        privateCluster: true

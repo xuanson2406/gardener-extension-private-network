@@ -34,7 +34,7 @@ const (
 	namespaceIstioIngress = "istio-ingress"
 	activeStatus          = "ACTIVE"
 	errorStatus           = "ERROR"
-	prefixLB              = "private_network"
+	PrefixLB              = "private_network"
 	clusterTypePublic     = "Public"
 	clusterTypePrivate    = "Private"
 )
@@ -69,7 +69,7 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 		loadbalancer    *loadbalancers.LoadBalancer
 		allowRangeCIDRs helper.IPNet
 	)
-	nameLB := fmt.Sprintf("%s-%s", prefixLB, ex.Namespace)
+	nameLB := fmt.Sprintf("%s-%s", PrefixLB, ex.Namespace)
 	cluster, err := helper.GetClusterForExtension(ctx, a.client, ex)
 	if err != nil {
 		return err
@@ -143,7 +143,7 @@ func (a *actuator) Delete(ctx context.Context, log logr.Logger, ex *extensionsv1
 	a.logger.Info("Hello World, I just entered the Delete method")
 	namespace := ex.GetNamespace()
 	log.Info("Component is being deleted", "component", "", "namespace", namespace)
-	nameLB := fmt.Sprintf("%s-%s", prefixLB, ex.Namespace)
+	nameLB := fmt.Sprintf("%s-%s", PrefixLB, ex.Namespace)
 	cluster, err := helper.GetClusterForExtension(ctx, a.client, ex)
 	if err != nil {
 		return err

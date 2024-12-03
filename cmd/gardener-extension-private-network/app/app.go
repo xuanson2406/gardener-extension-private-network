@@ -26,7 +26,7 @@ func NewServiceControllerCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "gardener-extension-private-network",
-		Short:         "Minimal working example controller does nothing special",
+		Short:         "Extension provide private network of shoot cluster",
 		SilenceErrors: true,
 
 		RunE: func(cmd *cobra.Command, args []string) error {
