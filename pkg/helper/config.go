@@ -5,18 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 
+	consts "github.com/gardener/gardener-extension-private-network/pkg/constants"
 	"github.com/gardener/gardener-extension-private-network/pkg/extensionspec"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"gopkg.in/gcfg.v1"
 	v1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-)
-
-const (
-	secretConfig                        = "external-openstack-cloud-config"
-	namespace                           = "kube-system"
-	flavorType                          = "basic"
-	defaultLoadBalancerSourceRangesIPv4 = "0.0.0.0/0"
 )
 
 type Global struct {
@@ -91,8 +85,8 @@ func GetGlobalConfigforPrivateNetwork(
 	}
 	secret := &v1.Secret{}
 	err = c.Get(ctx, client.ObjectKey{
-		Namespace: namespace,
-		Name:      secretConfig,
+		Namespace: consts.Namespace,
+		Name:      consts.SecretConfig,
 	}, secret)
 	if err != nil {
 		return nil, err
@@ -119,7 +113,7 @@ func GetGlobalConfigforPrivateNetwork(
 		WorkerNetwork:    netSpec.Network,
 		IstioSubnetID:    cfg.LoadBalancer.SubnetID,
 		FloatingPoolName: netSpec.FloatingPoolName,
-		FlavorType:       flavorType,
+		FlavorType:       consts.FlavorType,
 	}
 	return config, nil
 }
@@ -135,7 +129,7 @@ func GetLoadBalancerSourceRanges(ctx context.Context, extSpec *extensionspec.Ext
 		specs = extSpec.AlowCIDRs
 		specs = append(specs, config.WorkerNetwork.Workers)
 	} else {
-		specs = append(specs, defaultLoadBalancerSourceRangesIPv4)
+		specs = append(specs, consts.DefaultLoadBalancerSourceRangesIPv4)
 	}
 
 	ipnets, err = ParseIPNets(specs...)

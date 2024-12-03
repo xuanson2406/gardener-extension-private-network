@@ -18,7 +18,7 @@ package healthcheck
 import (
 	"context"
 
-	"github.com/gardener/gardener-extension-private-network/pkg/controller/lifecycle"
+	consts "github.com/gardener/gardener-extension-private-network/pkg/constants"
 	extensionsconfig "github.com/gardener/gardener/extensions/pkg/apis/config"
 	"github.com/gardener/gardener/extensions/pkg/controller/healthcheck"
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
@@ -41,7 +41,7 @@ var (
 func RegisterHealthChecks(ctx context.Context, mgr manager.Manager, opts *healthcheck.DefaultAddArgs) error {
 	return healthcheck.DefaultRegistration(
 		ctx,
-		lifecycle.Type,
+		consts.Type,
 		extensionsv1alpha1.SchemeGroupVersion.WithKind(extensionsv1alpha1.ExtensionResource),
 		func() client.ObjectList { return &extensionsv1alpha1.ExtensionList{} },
 		func() extensionsv1alpha1.Object { return &extensionsv1alpha1.Extension{} },
@@ -51,7 +51,7 @@ func RegisterHealthChecks(ctx context.Context, mgr manager.Manager, opts *health
 		[]healthcheck.ConditionTypeToHealthCheck{
 			{
 				ConditionType: string(gardencorev1beta1.SeedExtensionsReady),
-				HealthCheck:   NewLoadbalancerChecker(lifecycle.PrefixLB, lifecycle.Type),
+				HealthCheck:   NewLoadbalancerChecker(consts.PrefixLB, consts.Type),
 			},
 		},
 		sets.New[gardencorev1beta1.ConditionType](),

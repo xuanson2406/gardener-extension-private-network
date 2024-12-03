@@ -9,8 +9,8 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
-	"time"
 
+	consts "github.com/gardener/gardener-extension-private-network/pkg/constants"
 	"github.com/gardener/gardener-extension-private-network/pkg/extensionspec"
 	"github.com/gardener/gardener-extension-private-network/pkg/helper"
 	"github.com/gardener/gardener/extensions/pkg/controller/extension"
@@ -25,18 +25,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-)
-
-const (
-	deletionTimeout       = 2 * time.Minute
-	istioGatewayName      = "kube-apiserver"
-	keyIstio              = "istio-ingressgateway"
-	namespaceIstioIngress = "istio-ingress"
-	activeStatus          = "ACTIVE"
-	errorStatus           = "ERROR"
-	PrefixLB              = "private_network"
-	clusterTypePublic     = "Public"
-	clusterTypePrivate    = "Private"
 )
 
 // NewActuator returns an actuator responsible for Extension resources.
@@ -69,7 +57,7 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 		loadbalancer    *loadbalancers.LoadBalancer
 		allowRangeCIDRs helper.IPNet
 	)
-	nameLB := fmt.Sprintf("%s-%s", PrefixLB, ex.Namespace)
+	nameLB := fmt.Sprintf("%s-%s", consts.PrefixLB, ex.Namespace)
 	cluster, err := helper.GetClusterForExtension(ctx, a.client, ex)
 	if err != nil {
 		return err
@@ -84,7 +72,7 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 	if err != nil {
 		return err
 	}
-	vipLBistio, err := a.findVipLBistio(ctx, namespaceIstioIngress)
+	vipLBistio, err := a.findVipLBistio(ctx, consts.NamespaceIstioIngress)
 	if err != nil {
 		return err
 	}
@@ -107,14 +95,14 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 			return err
 		}
 	}
-	if loadbalancer.ProvisioningStatus != activeStatus {
-		if loadbalancer.ProvisioningStatus == errorStatus {
+	if loadbalancer.ProvisioningStatus != consts.ActiveStatus {
+		if loadbalancer.ProvisioningStatus == consts.ErrorStatus {
 			err := helper.DeleteLoadbalancer(privateNetworkConfig, loadbalancer, true)
 			if err != nil {
 				return fmt.Errorf("error to delete the error Loadbalancer [ID=%s] [Name=%s]: [%v]", loadbalancer.ID, loadbalancer.Name, err)
 			}
 			return fmt.Errorf("load balancer for extension private-network [ns=%s] current provisioning status is %s, deleted it and recreate",
-				ex.Namespace, errorStatus)
+				ex.Namespace, consts.ErrorStatus)
 		}
 		return fmt.Errorf("load balancer %s is not ACTIVE, current provisioning status: %s", loadbalancer.ID, loadbalancer.ProvisioningStatus)
 	}
@@ -127,11 +115,11 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 		return fmt.Errorf("error to attach floating IP for LB [ID=%s]: [%v]", loadbalancer.ID, err)
 	}
 	if extSpec.PrivateCluster {
-		extState.ClusterType = clusterTypePrivate
+		extState.ClusterType = consts.ClusterTypePrivate
 		extState.InternalAddressLoadBalancer = &loadbalancer.VipAddress
 		extState.ExternalAddressLoadBalancer = nil
 	} else {
-		extState.ClusterType = clusterTypePublic
+		extState.ClusterType = consts.ClusterTypePublic
 		extState.InternalAddressLoadBalancer = &loadbalancer.VipAddress
 		extState.ExternalAddressLoadBalancer = &floatIP
 	}
@@ -143,7 +131,7 @@ func (a *actuator) Delete(ctx context.Context, log logr.Logger, ex *extensionsv1
 	a.logger.Info("Hello World, I just entered the Delete method")
 	namespace := ex.GetNamespace()
 	log.Info("Component is being deleted", "component", "", "namespace", namespace)
-	nameLB := fmt.Sprintf("%s-%s", PrefixLB, ex.Namespace)
+	nameLB := fmt.Sprintf("%s-%s", consts.PrefixLB, ex.Namespace)
 	cluster, err := helper.GetClusterForExtension(ctx, a.client, ex)
 	if err != nil {
 		return err
@@ -180,7 +168,7 @@ func (a *actuator) findVipLBistio(ctx context.Context, istioNamespace string) ([
 		return nil, fmt.Errorf("failed to list services in namespace %s: %v", istioNamespace, err)
 	}
 	for _, svc := range svcList.Items {
-		if svc.Spec.Type == v1.ServiceTypeLoadBalancer && svc.Spec.Selector["app"] == keyIstio {
+		if svc.Spec.Type == v1.ServiceTypeLoadBalancer && svc.Spec.Selector["app"] == consts.KeyIstio {
 			klog.Infof("Add IP external %s to list", svc.Status.LoadBalancer.Ingress[0].IP)
 			istioIPlist = append(istioIPlist, svc.Status.LoadBalancer.Ingress[0].IP)
 		}

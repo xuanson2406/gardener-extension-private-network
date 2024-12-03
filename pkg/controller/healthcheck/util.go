@@ -5,11 +5,14 @@ import (
 	"encoding/json"
 	"fmt"
 
+	consts "github.com/gardener/gardener-extension-private-network/pkg/constants"
 	"github.com/gardener/gardener-extension-private-network/pkg/extensionspec"
 	"github.com/gardener/gardener-extension-private-network/pkg/helper"
 	"github.com/gardener/gardener/extensions/pkg/controller/healthcheck"
+	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"github.com/go-logr/logr"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -62,7 +65,7 @@ func (h *DefaultHealthChecker) Check(ctx context.Context, request types.Namespac
 		if apierrors.IsNotFound(err) {
 			return &healthcheck.SingleCheckResult{
 				Status: gardencorev1beta1.ConditionFalse,
-				Detail: fmt.Sprintf("Managed Resource %q in namespace %q not found", healthChecker.managedResourceName, request.Namespace),
+				Detail: fmt.Sprintf("Private Network extension in namespace %q not found", request.Namespace),
 			}, nil
 		}
 		err := fmt.Errorf("unable to check Loadbalancer. Failed to get extension in namespace %q: %w", request.Namespace, err)
@@ -71,13 +74,40 @@ func (h *DefaultHealthChecker) Check(ctx context.Context, request types.Namespac
 	}
 	cluster, err := helper.GetClusterForExtension(ctx, h.seedClient, extension)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	extSpec := &extensionspec.ExtensionSpec{}
-	if ex.Spec.ProviderConfig != nil && ex.Spec.ProviderConfig.Raw != nil {
-		if err := json.Unmarshal(ex.Spec.ProviderConfig.Raw, &extSpec); err != nil {
-			return err
+	if extension.Spec.ProviderConfig != nil && extension.Spec.ProviderConfig.Raw != nil {
+		if err := json.Unmarshal(extension.Spec.ProviderConfig.Raw, &extSpec); err != nil {
+			return nil, err
 		}
+	}
+	privateNetworkConfig, err := helper.GetGlobalConfigforPrivateNetwork(ctx, h.seedClient, extension, cluster.Shoot.Name)
+	if err != nil {
+		return nil, fmt.Errorf("error to get private network configuration for shoot %s: [%v]", cluster.Shoot.Name, err)
+	}
+	loadbalancer, err := helper.GetLoadbalancerByName(privateNetworkConfig, nameLB)
+	if err != nil {
+		if err != helper.ErrNotFound {
+			return nil, fmt.Errorf("error getting loadbalancer for extension %s: [%v]", extension.Namespace, err)
+		}
+
+		return &healthcheck.SingleCheckResult{
+			Status: gardencorev1beta1.ConditionFalse,
+			Detail: fmt.Sprintf("Not Found Loadbalancer [Name=%s] for private network extension in namespace %q", nameLB, request.Namespace),
+		}, nil
+	}
+	if loadbalancer.ProvisioningStatus != consts.ActiveStatus {
+		if loadbalancer.ProvisioningStatus == consts.ErrorStatus {
+			return &healthcheck.SingleCheckResult{
+				Status: gardencorev1beta1.ConditionFalse,
+				Detail: fmt.Sprintf("Provisioning status of LB [Name=%s] in namespace %q is Error", nameLB, request.Namespace),
+			}, nil
+		}
+		return &healthcheck.SingleCheckResult{
+			Status: gardencorev1beta1.ConditionUnknown,
+			Detail: fmt.Sprintf("Provisioning status of LB [Name=%s] in namespace %q is not Active", nameLB, request.Namespace),
+		}, nil
 	}
 	return &healthcheck.SingleCheckResult{Status: gardencorev1beta1.ConditionTrue}, nil
 }

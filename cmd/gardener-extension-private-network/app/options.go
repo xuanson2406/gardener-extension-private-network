@@ -7,8 +7,10 @@ package app
 import (
 	"os"
 
+	"github.com/gardener/gardener-extension-private-network/pkg/controller/healthcheck"
 	"github.com/gardener/gardener-extension-private-network/pkg/controller/lifecycle"
 	controllercmd "github.com/gardener/gardener/extensions/pkg/controller/cmd"
+	extensionshealthcheckcontroller "github.com/gardener/gardener/extensions/pkg/controller/healthcheck"
 )
 
 // ExtensionName is the name of the extension.
@@ -52,7 +54,8 @@ func NewOptions() *Options {
 		},
 		reconcileOptions: &controllercmd.ReconcilerOptions{},
 		controllerSwitches: controllercmd.NewSwitchOptions(
-			controllercmd.Switch("private-network_lifecycle_controller", lifecycle.AddToManager)),
+			controllercmd.Switch("private-network_lifecycle_controller", lifecycle.AddToManager),
+			controllercmd.Switch(extensionshealthcheckcontroller.ControllerName, healthcheck.AddToManager)),
 	}
 
 	options.optionAggregator = controllercmd.NewOptionAggregator(

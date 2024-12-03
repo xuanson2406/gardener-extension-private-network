@@ -9,8 +9,8 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
-	"time"
 
+	consts "github.com/gardener/gardener-extension-private-network/pkg/constants"
 	"github.com/gardener/gardener-extension-private-network/pkg/extensionspec"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"github.com/gophercloud/gophercloud"
@@ -27,19 +27,6 @@ import (
 	"gopkg.in/godo.v2/glob"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
-)
-
-const (
-	OctaviaFeatureTimeout = 3
-
-	waitLoadbalancerInitDelay   = 1 * time.Second
-	waitLoadbalancerFactor      = 1.2
-	waitLoadbalancerActiveSteps = 25
-	waitLoadbalancerDeleteSteps = 12
-	steps                       = 25
-
-	activeStatus = "ACTIVE"
-	errorStatus  = "ERROR"
 )
 
 // ErrNotFound is used to inform that the object is missing
@@ -282,9 +269,9 @@ func listSubnetsForNetwork(netClient *gophercloud.ServiceClient, networkID strin
 func WaitActiveAndGetLoadBalancer(client *gophercloud.ServiceClient, loadbalancerID string) (*loadbalancers.LoadBalancer, error) {
 	fmt.Printf("Waiting for load balancer ACTIVE - lb %s", loadbalancerID)
 	backoff := wait.Backoff{
-		Duration: waitLoadbalancerInitDelay,
-		Factor:   waitLoadbalancerFactor,
-		Steps:    steps,
+		Duration: consts.WaitLoadbalancerInitDelay,
+		Factor:   consts.WaitLoadbalancerFactor,
+		Steps:    consts.Steps,
 	}
 
 	var loadbalancer *loadbalancers.LoadBalancer
@@ -295,10 +282,10 @@ func WaitActiveAndGetLoadBalancer(client *gophercloud.ServiceClient, loadbalance
 		if err != nil {
 			return false, err
 		}
-		if loadbalancer.ProvisioningStatus == activeStatus {
+		if loadbalancer.ProvisioningStatus == consts.ActiveStatus {
 			klog.Infof("Load balancer ACTIVE lbID %s", loadbalancerID)
 			return true, nil
-		} else if loadbalancer.ProvisioningStatus == errorStatus {
+		} else if loadbalancer.ProvisioningStatus == consts.ErrorStatus {
 			return true, fmt.Errorf("Loadbalancer [ID=%s] has gone into ERROR state", loadbalancerID)
 		} else {
 			return false, nil
@@ -307,7 +294,7 @@ func WaitActiveAndGetLoadBalancer(client *gophercloud.ServiceClient, loadbalance
 	})
 
 	if wait.Interrupted(err) {
-		err = fmt.Errorf("timeout waiting for the loadbalancer %s reach %s state ", loadbalancerID, activeStatus)
+		err = fmt.Errorf("timeout waiting for the loadbalancer %s reach %s state ", loadbalancerID, consts.ActiveStatus)
 	}
 
 	return loadbalancer, err
@@ -546,7 +533,7 @@ func DeleteLoadbalancer(config *PrivateNetworkConfig, loadbalancer *loadbalancer
 	if err != nil {
 		return fmt.Errorf("failed to create network client: %v", err)
 	}
-	if loadbalancer.ProvisioningStatus != activeStatus && loadbalancer.ProvisioningStatus != errorStatus {
+	if loadbalancer.ProvisioningStatus != consts.ActiveStatus && loadbalancer.ProvisioningStatus != consts.ErrorStatus {
 		return fmt.Errorf("load balancer %s is in immutable status, current provisioning status: %s", loadbalancer.ID, loadbalancer.ProvisioningStatus)
 	}
 
@@ -573,9 +560,9 @@ func deleteLoadbalancer(client *gophercloud.ServiceClient, lbID string, cascade 
 func waitLoadbalancerDeleted(client *gophercloud.ServiceClient, loadbalancerID string) error {
 	klog.V(4).InfoS("Waiting for load balancer deleted", "lbID", loadbalancerID)
 	backoff := wait.Backoff{
-		Duration: waitLoadbalancerInitDelay,
-		Factor:   waitLoadbalancerFactor,
-		Steps:    waitLoadbalancerDeleteSteps,
+		Duration: consts.WaitLoadbalancerInitDelay,
+		Factor:   consts.WaitLoadbalancerFactor,
+		Steps:    consts.WaitLoadbalancerDeleteSteps,
 	}
 	err := wait.ExponentialBackoff(backoff, func() (bool, error) {
 		_, err := loadbalancers.Get(client, loadbalancerID).Extract()

@@ -7,15 +7,10 @@ package lifecycle
 import (
 	"context"
 
+	consts "github.com/gardener/gardener-extension-private-network/pkg/constants"
 	"github.com/gardener/gardener/extensions/pkg/controller/extension"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
-)
-
-const (
-	// Type is the type of Extension resource.
-	Type   = "private-network"
-	Suffix = "-extension-service"
 )
 
 var (
@@ -42,10 +37,10 @@ func AddToManagerWithOptions(ctx context.Context, mgr manager.Manager, opts *Add
 	return extension.Add(ctx, mgr, extension.AddArgs{
 		Actuator:          NewActuator(mgr),
 		ControllerOptions: opts.ControllerOptions,
-		Name:              Type + Suffix,
-		FinalizerSuffix:   Type + Suffix,
+		Name:              consts.Type + consts.Suffix,
+		FinalizerSuffix:   consts.Type + consts.Suffix,
 		Resync:            0,
 		Predicates:        extension.DefaultPredicates(ctx, mgr, DefaultAddOptions.IgnoreOperationAnnotation),
-		Type:              Type,
+		Type:              consts.Type,
 	})
 }
