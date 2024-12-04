@@ -282,10 +282,10 @@ func WaitActiveAndGetLoadBalancer(client *gophercloud.ServiceClient, loadbalance
 		if err != nil {
 			return false, err
 		}
-		if loadbalancer.ProvisioningStatus == consts.ActiveStatus {
+		if loadbalancer.ProvisioningStatus == consts.ProvisioningActiveStatus {
 			klog.Infof("Load balancer ACTIVE lbID %s", loadbalancerID)
 			return true, nil
-		} else if loadbalancer.ProvisioningStatus == consts.ErrorStatus {
+		} else if loadbalancer.ProvisioningStatus == consts.ProvisioningErrorStatus {
 			return true, fmt.Errorf("Loadbalancer [ID=%s] has gone into ERROR state", loadbalancerID)
 		} else {
 			return false, nil
@@ -294,7 +294,7 @@ func WaitActiveAndGetLoadBalancer(client *gophercloud.ServiceClient, loadbalance
 	})
 
 	if wait.Interrupted(err) {
-		err = fmt.Errorf("timeout waiting for the loadbalancer %s reach %s state ", loadbalancerID, consts.ActiveStatus)
+		err = fmt.Errorf("timeout waiting for the loadbalancer %s reach %s state ", loadbalancerID, consts.ProvisioningActiveStatus)
 	}
 
 	return loadbalancer, err
@@ -533,7 +533,7 @@ func DeleteLoadbalancer(config *PrivateNetworkConfig, loadbalancer *loadbalancer
 	if err != nil {
 		return fmt.Errorf("failed to create network client: %v", err)
 	}
-	if loadbalancer.ProvisioningStatus != consts.ActiveStatus && loadbalancer.ProvisioningStatus != consts.ErrorStatus {
+	if loadbalancer.ProvisioningStatus != consts.ProvisioningActiveStatus && loadbalancer.ProvisioningStatus != consts.ProvisioningErrorStatus {
 		return fmt.Errorf("load balancer %s is in immutable status, current provisioning status: %s", loadbalancer.ID, loadbalancer.ProvisioningStatus)
 	}
 

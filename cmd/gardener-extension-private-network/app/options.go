@@ -42,15 +42,15 @@ func NewOptions() *Options {
 		},
 		controllerOptions: &controllercmd.ControllerOptions{
 			// This is a default value.
-			MaxConcurrentReconciles: 5,
+			MaxConcurrentReconciles: 10,
 		},
 		lifecycleOptions: &controllercmd.ControllerOptions{
 			// This is a default value.
-			MaxConcurrentReconciles: 5,
+			MaxConcurrentReconciles: 10,
 		},
 		healthOptions: &controllercmd.ControllerOptions{
 			// This is a default value.
-			MaxConcurrentReconciles: 5,
+			MaxConcurrentReconciles: 10,
 		},
 		reconcileOptions: &controllercmd.ReconcilerOptions{},
 		controllerSwitches: controllercmd.NewSwitchOptions(

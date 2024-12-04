@@ -76,7 +76,7 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 	if err != nil {
 		return err
 	}
-	privateNetworkConfig, err := helper.GetGlobalConfigforPrivateNetwork(ctx, a.client, ex, cluster.Shoot.Name)
+	privateNetworkConfig, err := helper.GetGlobalConfigforPrivateNetwork(ctx, a.client, ex)
 	if err != nil {
 		return fmt.Errorf("error to get private network configuration for shoot %s: [%v]", cluster.Shoot.Name, err)
 	}
@@ -95,14 +95,14 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 			return err
 		}
 	}
-	if loadbalancer.ProvisioningStatus != consts.ActiveStatus {
-		if loadbalancer.ProvisioningStatus == consts.ErrorStatus {
+	if loadbalancer.ProvisioningStatus != consts.ProvisioningActiveStatus {
+		if loadbalancer.ProvisioningStatus == consts.ProvisioningErrorStatus {
 			err := helper.DeleteLoadbalancer(privateNetworkConfig, loadbalancer, true)
 			if err != nil {
 				return fmt.Errorf("error to delete the error Loadbalancer [ID=%s] [Name=%s]: [%v]", loadbalancer.ID, loadbalancer.Name, err)
 			}
 			return fmt.Errorf("load balancer for extension private-network [ns=%s] current provisioning status is %s, deleted it and recreate",
-				ex.Namespace, consts.ErrorStatus)
+				ex.Namespace, consts.ProvisioningErrorStatus)
 		}
 		return fmt.Errorf("load balancer %s is not ACTIVE, current provisioning status: %s", loadbalancer.ID, loadbalancer.ProvisioningStatus)
 	}
@@ -136,7 +136,7 @@ func (a *actuator) Delete(ctx context.Context, log logr.Logger, ex *extensionsv1
 	if err != nil {
 		return err
 	}
-	privateNetworkConfig, err := helper.GetGlobalConfigforPrivateNetwork(ctx, a.client, ex, cluster.Shoot.Name)
+	privateNetworkConfig, err := helper.GetGlobalConfigforPrivateNetwork(ctx, a.client, ex)
 	if err != nil {
 		return fmt.Errorf("error to get private network configuration for shoot %s: [%v]", cluster.Shoot.Name, err)
 	}

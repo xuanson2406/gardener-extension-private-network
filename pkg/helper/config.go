@@ -10,6 +10,7 @@ import (
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	"gopkg.in/gcfg.v1"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/klog/v2"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -70,13 +71,13 @@ func GetGlobalConfigforPrivateNetwork(
 	ctx context.Context,
 	c client.Reader,
 	extension *extensionsv1alpha1.Extension,
-	shootName string,
 ) (*PrivateNetworkConfig, error) {
 
 	cluster, err := GetClusterForExtension(ctx, c, extension)
 	if err != nil {
 		return nil, err
 	}
+	klog.Infof("Get cluster for extension %s", cluster.ObjectMeta.Name)
 	netSpec := NetworkWorker{}
 	if cluster.Shoot.Spec.Provider.InfrastructureConfig != nil && cluster.Shoot.Spec.Provider.InfrastructureConfig.Raw != nil {
 		if err := json.Unmarshal(cluster.Shoot.Spec.Provider.InfrastructureConfig.Raw, &netSpec); err != nil {
@@ -89,10 +90,12 @@ func GetGlobalConfigforPrivateNetwork(
 		Name:      consts.SecretConfig,
 	}, secret)
 	if err != nil {
+		klog.Infof("Error to get secrets contain config: [%v]", err)
 		return nil, err
 	}
 	encodedData := secret.Data["cloud.conf"]
 	if encodedData == nil {
+		klog.Infof("cloud.conf key not found in the secret")
 		return nil, fmt.Errorf("cloud.conf key not found in the secret")
 	}
 	// Parse the decoded data into the struct

@@ -17,14 +17,13 @@ package healthcheck
 
 import (
 	"context"
+	"time"
 
 	consts "github.com/gardener/gardener-extension-private-network/pkg/constants"
 	extensionsconfig "github.com/gardener/gardener/extensions/pkg/apis/config"
 	"github.com/gardener/gardener/extensions/pkg/controller/healthcheck"
-	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
 	extensionsv1alpha1 "github.com/gardener/gardener/pkg/apis/extensions/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/util/sets"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 )
@@ -32,7 +31,9 @@ import (
 var (
 	// DefaultAddOptions contains the default options for the healthchecks.
 	DefaultAddOptions = healthcheck.DefaultAddArgs{
-		HealthCheckConfig: extensionsconfig.HealthCheckConfig{SyncPeriod: metav1.Duration{}},
+		// ControllerOptions contains options for the controller.
+		HealthCheckConfig: extensionsconfig.HealthCheckConfig{SyncPeriod: metav1.Duration{
+			Duration: 45 * time.Second}},
 	}
 )
 
@@ -50,11 +51,11 @@ func RegisterHealthChecks(ctx context.Context, mgr manager.Manager, opts *health
 		nil,
 		[]healthcheck.ConditionTypeToHealthCheck{
 			{
-				ConditionType: string(gardencorev1beta1.SeedExtensionsReady),
+				ConditionType: string("Loadbalancer Private Network is HEALTHY"),
 				HealthCheck:   NewLoadbalancerChecker(consts.PrefixLB, consts.Type),
 			},
 		},
-		sets.New[gardencorev1beta1.ConditionType](),
+		nil,
 	)
 }
 
