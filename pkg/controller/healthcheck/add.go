@@ -32,8 +32,7 @@ var (
 	// DefaultAddOptions contains the default options for the healthchecks.
 	DefaultAddOptions = healthcheck.DefaultAddArgs{
 		// ControllerOptions contains options for the controller.
-		HealthCheckConfig: extensionsconfig.HealthCheckConfig{SyncPeriod: metav1.Duration{
-			Duration: 45 * time.Second}},
+		HealthCheckConfig: extensionsconfig.HealthCheckConfig{SyncPeriod: metav1.Duration{Duration: 45 * time.Second}},
 	}
 )
 
