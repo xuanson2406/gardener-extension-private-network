@@ -23,6 +23,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/klog/v2"
 	"k8s.io/utils/clock"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	logf "sigs.k8s.io/controller-runtime/pkg/log"
@@ -144,6 +145,7 @@ func (r *reconciler) performHealthCheck(ctx context.Context, log logr.Logger, re
 
 	healthCheckResults, err := r.actuator.ExecuteHealthCheckFunctions(healthCheckCtx, log, types.NamespacedName{Namespace: request.Namespace, Name: request.Name})
 	if err != nil {
+		klog.Infof("healthCheckResults failed: %v", err)
 		var conditions []condition
 		log.Error(err, "Failed to execute healthChecks, updating each HealthCheckCondition for the extension resource to ConditionCheckError", "kind", r.registeredExtension.groupVersionKind.Kind, "conditionTypes", r.registeredExtension.healthConditionTypes)
 		for _, healthConditionType := range r.registeredExtension.healthConditionTypes {
@@ -162,6 +164,7 @@ func (r *reconciler) performHealthCheck(ctx context.Context, log logr.Logger, re
 
 	conditions := make([]condition, 0, len(*healthCheckResults))
 	for _, healthCheckResult := range *healthCheckResults {
+		klog.Infof("healthCheckResult in performHealthCheck: %s - %s - %d", healthCheckResult.Status, *healthCheckResult.Detail, healthCheckResult.FailedChecks)
 		conditionBuilder, err := v1beta1helper.NewConditionBuilder(gardencorev1beta1.ConditionType(healthCheckResult.HealthConditionType))
 		if err != nil {
 			return reconcile.Result{}, err
@@ -191,6 +194,7 @@ func (r *reconciler) performHealthCheck(ctx context.Context, log logr.Logger, re
 	}
 
 	if err := r.updateExtensionConditions(ctx, extension, conditions...); err != nil {
+		klog.Infof("updateExtensionConditions with extension %s", extension.GetName())
 		return reconcile.Result{}, err
 	}
 

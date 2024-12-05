@@ -32,6 +32,7 @@ import (
 	extensionscontroller "github.com/gardener/gardener/extensions/pkg/controller"
 	"github.com/gardener/gardener/extensions/pkg/util"
 	gardencorev1beta1 "github.com/gardener/gardener/pkg/apis/core/v1beta1"
+	"k8s.io/klog/v2"
 )
 
 // Actuator contains all the health checks and the means to execute them
@@ -163,11 +164,14 @@ func (a *Actuator) ExecuteHealthCheckFunctions(ctx context.Context, log logr.Log
 			}
 
 			healthCheckResult, err := check.Check(ctx, request)
-
+			if err != nil {
+				klog.Infof("Healthcheck Func result: %s - %s", healthCheckResult.Status, healthCheckResult.Detail)
+			} else {
+				klog.Infof("Healthcheck: %s - %s", healthCheckResult.Status, healthCheckResult.Detail)
+			}
 			if healthCheckResult != nil && errorCodeCheckFunc != nil {
 				healthCheckResult.Codes = append(healthCheckResult.Codes, errorCodeCheckFunc(fmt.Errorf("%s", healthCheckResult.Detail))...)
 			}
-
 			channel <- channelResult{
 				healthCheckResult:   healthCheckResult,
 				error:               err,
@@ -186,6 +190,7 @@ func (a *Actuator) ExecuteHealthCheckFunctions(ctx context.Context, log logr.Log
 	// loop runs until channel is closed
 	for channelResult := range channel {
 		if groupedHealthCheckResults[channelResult.healthConditionType] == nil {
+			klog.Infof("channelResult: %s", groupedHealthCheckResults[channelResult.healthConditionType])
 			groupedHealthCheckResults[channelResult.healthConditionType] = &checkResultForConditionType{}
 		}
 		if channelResult.error != nil {
@@ -222,6 +227,7 @@ func (a *Actuator) ExecuteHealthCheckFunctions(ctx context.Context, log logr.Log
 				FailedChecks:        len(result.failedChecks),
 				Codes:               result.codes,
 			})
+			klog.Infof("CheckResult: %d, %s, %s ", len(checkResults), checkResults[0].Status, checkResults[0].Detail)
 			continue
 		}
 
@@ -261,6 +267,8 @@ func (a *Actuator) ExecuteHealthCheckFunctions(ctx context.Context, log logr.Log
 			SuccessfulChecks:    result.successfulChecks,
 		})
 	}
-
+	for i, res := range checkResults {
+		klog.Infof("result %d: %s - %s - %s - %d - %d\n", i, res.Status, *res.Detail, res.HealthConditionType, res.UnsuccessfulChecks, res.SuccessfulChecks)
+	}
 	return &checkResults, nil
 }

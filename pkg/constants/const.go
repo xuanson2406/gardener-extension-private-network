@@ -22,7 +22,7 @@ const (
 	PrefixLB                            = "private_network"
 	ClusterTypePublic                   = "Public"
 	ClusterTypePrivate                  = "Private"
-	SecretConfig                        = "external-openstack-cloud-config"
+	SecretConfig                        = "external-openstack-cloud-config-private"
 	Namespace                           = "kube-system"
 	FlavorType                          = "basic"
 	DefaultLoadBalancerSourceRangesIPv4 = "0.0.0.0/0"
