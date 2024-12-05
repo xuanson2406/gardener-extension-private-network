@@ -19,6 +19,7 @@ const (
 	ProvisioningErrorStatus             = "ERROR"
 	OperatingOnlineStatus               = "ONLINE"
 	OperationErrorStatus                = "ERROR"
+	OperationOfflineStatus              = "OFFLINE"
 	PrefixLB                            = "private_network"
 	ClusterTypePublic                   = "Public"
 	ClusterTypePrivate                  = "Private"

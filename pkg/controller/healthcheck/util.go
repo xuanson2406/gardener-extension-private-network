@@ -121,12 +121,12 @@ func (h *DefaultHealthChecker) Check(ctx context.Context, request types.Namespac
 		}
 		klog.Infof("Provisioning status of LB [Name=%s] in namespace %q is not Active: Status=%s", nameLB, request.Namespace, loadbalancer.OperatingStatus)
 		return &healthcheck.SingleCheckResult{
-			Status: gardencorev1beta1.ConditionUnknown,
+			Status: gardencorev1beta1.ConditionProgressing,
 			Detail: fmt.Sprintf("Provisioning status of LB [Name=%s] in namespace %q is not Active: Status=%s", nameLB, request.Namespace, loadbalancer.OperatingStatus),
 		}, nil
 	}
 	if loadbalancer.OperatingStatus != consts.OperatingOnlineStatus {
-		if loadbalancer.ProvisioningStatus == consts.OperationErrorStatus {
+		if loadbalancer.OperatingStatus == consts.OperationErrorStatus || loadbalancer.OperatingStatus == consts.OperationOfflineStatus {
 			klog.Infof("Operating status of LB [Name=%s] in namespace %q is %s", nameLB, request.Namespace, loadbalancer.OperatingStatus)
 			return &healthcheck.SingleCheckResult{
 				Status: gardencorev1beta1.ConditionFalse,
@@ -136,7 +136,7 @@ func (h *DefaultHealthChecker) Check(ctx context.Context, request types.Namespac
 		klog.Infof("Operating status of LB [Name=%s] in namespace %q is not Active: Status=%s", nameLB, request.Namespace, loadbalancer.OperatingStatus)
 		return &healthcheck.SingleCheckResult{
 
-			Status: gardencorev1beta1.ConditionUnknown,
+			Status: gardencorev1beta1.ConditionProgressing,
 			Detail: fmt.Sprintf("Operating status of LB [Name=%s] in namespace %q is not Active: Status=%s", nameLB, request.Namespace, loadbalancer.OperatingStatus),
 		}, nil
 	}

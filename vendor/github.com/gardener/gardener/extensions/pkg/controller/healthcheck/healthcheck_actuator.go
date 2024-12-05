@@ -190,28 +190,33 @@ func (a *Actuator) ExecuteHealthCheckFunctions(ctx context.Context, log logr.Log
 	// loop runs until channel is closed
 	for channelResult := range channel {
 		if groupedHealthCheckResults[channelResult.healthConditionType] == nil {
-			klog.Infof("channelResult: %s", groupedHealthCheckResults[channelResult.healthConditionType])
+			klog.Infof("groupedHealthCheckResults[channelResult.healthConditionType] == nil,healthConditionType = %s", channelResult.healthConditionType)
 			groupedHealthCheckResults[channelResult.healthConditionType] = &checkResultForConditionType{}
 		}
 		if channelResult.error != nil {
+			klog.Infof("channelResult.error: %v", channelResult.error)
 			groupedHealthCheckResults[channelResult.healthConditionType].failedChecks = append(groupedHealthCheckResults[channelResult.healthConditionType].failedChecks, channelResult.error)
 			continue
 		}
 		if channelResult.healthCheckResult.Status == gardencorev1beta1.ConditionFalse {
+			klog.Infof("channelResult.healthCheckResult.Status: %s", channelResult.healthCheckResult.Status)
 			groupedHealthCheckResults[channelResult.healthConditionType].unsuccessfulChecks = append(groupedHealthCheckResults[channelResult.healthConditionType].unsuccessfulChecks, healthCheckUnsuccessful{detail: channelResult.healthCheckResult.Detail})
 			groupedHealthCheckResults[channelResult.healthConditionType].codes = append(groupedHealthCheckResults[channelResult.healthConditionType].codes, channelResult.healthCheckResult.Codes...)
 			continue
 		}
 		if channelResult.healthCheckResult.Status == gardencorev1beta1.ConditionProgressing {
+			klog.Infof("channelResult.healthCheckResult.Status: %s", channelResult.healthCheckResult.Status)
 			groupedHealthCheckResults[channelResult.healthConditionType].progressingChecks = append(groupedHealthCheckResults[channelResult.healthConditionType].progressingChecks, healthCheckProgressing{detail: channelResult.healthCheckResult.Detail, threshold: channelResult.healthCheckResult.ProgressingThreshold})
 			groupedHealthCheckResults[channelResult.healthConditionType].codes = append(groupedHealthCheckResults[channelResult.healthConditionType].codes, channelResult.healthCheckResult.Codes...)
 			continue
 		}
+		klog.Infof("groupedHealthCheckResults[channelResult.healthConditionType].successfulChecks++: %d", groupedHealthCheckResults[channelResult.healthConditionType].successfulChecks)
 		groupedHealthCheckResults[channelResult.healthConditionType].successfulChecks++
 	}
 
 	var checkResults []Result
 	for conditionType, result := range groupedHealthCheckResults {
+		klog.Infof("conditionType: %s - result: %v", result.unsuccessfulChecks)
 		if len(result.unsuccessfulChecks) > 0 || len(result.failedChecks) > 0 {
 			var details strings.Builder
 			result.appendFailedChecksDetails(&details)
@@ -268,7 +273,11 @@ func (a *Actuator) ExecuteHealthCheckFunctions(ctx context.Context, log logr.Log
 		})
 	}
 	for i, res := range checkResults {
-		klog.Infof("result %d: %s - %s - %s - %d - %d\n", i, res.Status, *res.Detail, res.HealthConditionType, res.UnsuccessfulChecks, res.SuccessfulChecks)
+		if res.Detail != nil {
+			klog.Infof("result %d: %s - %s - %s - %d - %d\n", i, res.Status, *res.Detail, res.HealthConditionType, res.UnsuccessfulChecks, res.SuccessfulChecks)
+		} else {
+			klog.Infof("result %d: %s - %s - %d - %d\n", i, res.Status, res.HealthConditionType, res.UnsuccessfulChecks, res.SuccessfulChecks)
+		}
 	}
 	return &checkResults, nil
 }

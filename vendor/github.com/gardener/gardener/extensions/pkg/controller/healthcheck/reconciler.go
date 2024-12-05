@@ -164,7 +164,7 @@ func (r *reconciler) performHealthCheck(ctx context.Context, log logr.Logger, re
 
 	conditions := make([]condition, 0, len(*healthCheckResults))
 	for _, healthCheckResult := range *healthCheckResults {
-		klog.Infof("healthCheckResult in performHealthCheck: %s - %s - %d", healthCheckResult.Status, *healthCheckResult.Detail, healthCheckResult.FailedChecks)
+		// klog.Infof("healthCheckResult in performHealthCheck: %s - %s - %d", healthCheckResult.Status, *healthCheckResult.Detail, healthCheckResult.FailedChecks)
 		conditionBuilder, err := v1beta1helper.NewConditionBuilder(gardencorev1beta1.ConditionType(healthCheckResult.HealthConditionType))
 		if err != nil {
 			return reconcile.Result{}, err
