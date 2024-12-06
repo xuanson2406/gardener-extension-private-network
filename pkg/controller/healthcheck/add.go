@@ -50,7 +50,7 @@ func RegisterHealthChecks(ctx context.Context, mgr manager.Manager, opts *health
 		nil,
 		[]healthcheck.ConditionTypeToHealthCheck{
 			{
-				ConditionType: string("Loadbalancer Private Network is HEALTHY"),
+				ConditionType: string("Loadbalancer Private Network"),
 				HealthCheck:   NewLoadbalancerChecker(consts.PrefixLB, consts.Type),
 			},
 		},

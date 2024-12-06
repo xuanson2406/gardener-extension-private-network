@@ -24,6 +24,7 @@ import (
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/extensions/layer3/portforwarding"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/networks"
 	"github.com/gophercloud/gophercloud/openstack/networking/v2/subnets"
+	"github.com/gophercloud/gophercloud/pagination"
 	"gopkg.in/godo.v2/glob"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
@@ -824,15 +825,20 @@ func CheckLoadBalancer(ctx context.Context,
 	listenerAllowedCIDRs := allowRangeCIDRs.StringSlice()
 	listerners := lb.Listeners
 	for _, listener := range listerners {
-		if len(listenerAllowedCIDRs) > 0 && !reflect.DeepEqual(listener.AllowedCIDRs, listenerAllowedCIDRs) {
-			_, err := listeners.Update(clientLB, listener.ID, listeners.UpdateOpts{
+		listenerCheck, err := GetListenerByName(clientLB, listener.Name, lb.ID)
+		if err != nil {
+			return lb, fmt.Errorf("failed to get listener [name=%s] in LB [name=%s]: %v", listener.Name, lb.Name, err)
+		}
+		if len(listenerAllowedCIDRs) > 0 && !reflect.DeepEqual(listenerCheck.AllowedCIDRs, listenerAllowedCIDRs) {
+			klog.Infof("listener.AllowedCIDRs: %v - listenerAllowedCIDRs: %v", listenerCheck.AllowedCIDRs, listenerAllowedCIDRs)
+			_, err := listeners.Update(clientLB, listenerCheck.ID, listeners.UpdateOpts{
 				AllowedCIDRs: &listenerAllowedCIDRs,
 			}).Extract()
 			if err != nil {
 				return lb, fmt.Errorf("failed to update listener allowed CIDRs: %v", err)
 			}
 
-			klog.Infof("listenerID: %s of LB [Name=%s] - listener allowed CIDRs updated", listener.ID, lb.Name)
+			klog.Infof("listenerID: %s of LB [Name=%s] - listener allowed CIDRs updated", listenerCheck.ID, lb.Name)
 		}
 		lb, err = WaitActiveAndGetLoadBalancer(clientLB, lb.ID)
 		if err != nil {
@@ -859,4 +865,38 @@ func getFlavorIDByType(clientLB *gophercloud.ServiceClient, typeName string) (st
 		}
 	}
 	return "", fmt.Errorf("Not found flavor ID with type %s", typeName)
+}
+
+// GetListenerByName gets a listener by its name, raise error if not found or get multiple ones.
+func GetListenerByName(client *gophercloud.ServiceClient, name string, lbID string) (*listeners.Listener, error) {
+	opts := listeners.ListOpts{
+		Name:           name,
+		LoadbalancerID: lbID,
+	}
+	pager := listeners.List(client, opts)
+	var listenerList []listeners.Listener
+
+	err := pager.EachPage(func(page pagination.Page) (bool, error) {
+		v, err := listeners.ExtractListeners(page)
+		if err != nil {
+			return false, err
+		}
+		listenerList = append(listenerList, v...)
+		if len(listenerList) > 1 {
+			return false, consts.ErrMultipleResults
+		}
+		return true, nil
+	})
+	if err != nil {
+		if IsNotFound(err) {
+			return nil, consts.ErrNotFound
+		}
+		return nil, err
+	}
+
+	if len(listenerList) == 0 {
+		return nil, consts.ErrNotFound
+	}
+
+	return &listenerList[0], nil
 }

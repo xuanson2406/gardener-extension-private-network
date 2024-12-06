@@ -5,7 +5,10 @@
 // Package constants defines constants used
 package constants
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 const (
 	// Type is the type of Extension resource.
@@ -35,3 +38,9 @@ const (
 	WaitLoadbalancerDeleteSteps = 12
 	Steps                       = 25
 )
+
+// ErrMultipleResults is used when we unexpectedly get back multiple results
+var ErrMultipleResults = errors.New("multiple results where only one expected")
+
+// ErrNotFound is used to inform that the object is missing
+var ErrNotFound = errors.New("failed to find object")
