@@ -9,6 +9,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	consts "github.com/gardener/gardener-extension-private-network/pkg/constants"
 	"github.com/gardener/gardener-extension-private-network/pkg/extensionspec"
@@ -115,7 +116,14 @@ func (a *actuator) Reconcile(ctx context.Context, log logr.Logger, ex *extension
 		return fmt.Errorf("error to attach floating IP for LB [ID=%s]: [%v]", loadbalancer.ID, err)
 	}
 	if loadbalancer.OperatingStatus == consts.OperationErrorStatus || loadbalancer.OperatingStatus == consts.OperationOfflineStatus {
-		return fmt.Errorf("LB [ID=%s] in namespace %s is not healthy: Operating Status [%s]", loadbalancer.ID, ex.Namespace, loadbalancer.OperatingStatus)
+		location, err := time.LoadLocation("UTC")
+		if err != nil {
+			return fmt.Errorf("failed to load location: %w", err)
+		}
+		convertTimeLBCreated := loadbalancer.CreatedAt.In(location)
+		if convertTimeLBCreated.Before(time.Now().In(location).Add(-consts.CreateLBOperatingTimeoute)) {
+			return fmt.Errorf("LB [ID=%s] in namespace %s is not healthy: Operating Status [%s]", loadbalancer.ID, ex.Namespace, loadbalancer.OperatingStatus)
+		}
 	}
 	if extSpec.PrivateCluster {
 		extState.ClusterType = consts.ClusterTypePrivate

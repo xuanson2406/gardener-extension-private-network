@@ -813,19 +813,22 @@ func CheckLoadBalancer(ctx context.Context,
 	allowRangeCIDRs IPNet) (*loadbalancers.LoadBalancer, error) {
 	provider, err := InitialClientOpenstack(config)
 	if err != nil {
-		return lb, err
+		return nil, err
 	}
 	// Initialize the loadbalancer client
 	clientLB, err := openstack.NewLoadBalancerV2(provider, gophercloud.EndpointOpts{
-		Region: config.AuthOpt.Region, // Replace with your region
+		Region: config.AuthOpt.Region,
 	})
 	if err != nil {
-		return lb, fmt.Errorf("failed to create loadbalancer client: %v", err)
+		return nil, fmt.Errorf("failed to create loadbalancer client: %v", err)
 	}
 	listenerAllowedCIDRs := allowRangeCIDRs.StringSlice()
-	listerners := lb.Listeners
+	listerners, err := getListenersByLoadBalancerID(clientLB, lb.ID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get listeners for LB [Name=%s]: %v", lb.Name, err)
+	}
 	for _, listener := range listerners {
-		listenerCheck, err := GetListenerByName(clientLB, listener.Name, lb.ID)
+		listenerCheck, err := getListenerByName(clientLB, listener.Name, lb.ID)
 		if err != nil {
 			return lb, fmt.Errorf("failed to get listener [name=%s] in LB [name=%s]: %v", listener.Name, lb.Name, err)
 		}
@@ -867,8 +870,8 @@ func getFlavorIDByType(clientLB *gophercloud.ServiceClient, typeName string) (st
 	return "", fmt.Errorf("Not found flavor ID with type %s", typeName)
 }
 
-// GetListenerByName gets a listener by its name, raise error if not found or get multiple ones.
-func GetListenerByName(client *gophercloud.ServiceClient, name string, lbID string) (*listeners.Listener, error) {
+// getListenerByName gets a listener by its name, raise error if not found or get multiple ones.
+func getListenerByName(client *gophercloud.ServiceClient, name string, lbID string) (*listeners.Listener, error) {
 	opts := listeners.ListOpts{
 		Name:           name,
 		LoadbalancerID: lbID,
@@ -899,4 +902,20 @@ func GetListenerByName(client *gophercloud.ServiceClient, name string, lbID stri
 	}
 
 	return &listenerList[0], nil
+}
+
+// getListenersByLoadBalancerID returns listener list
+func getListenersByLoadBalancerID(client *gophercloud.ServiceClient, lbID string) ([]listeners.Listener, error) {
+	var lbListeners []listeners.Listener
+
+	allPages, err := listeners.List(client, listeners.ListOpts{LoadbalancerID: lbID}).AllPages()
+	if err != nil {
+		return nil, err
+	}
+	lbListeners, err = listeners.ExtractListeners(allPages)
+	if err != nil {
+		return nil, err
+	}
+
+	return lbListeners, nil
 }

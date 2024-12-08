@@ -15,6 +15,7 @@ const (
 	Type                                = "private-network"
 	Suffix                              = "-extension-service"
 	DeletionTimeout                     = 2 * time.Minute
+	CreateLBOperatingTimeoute           = 15 * time.Minute
 	IstioGatewayName                    = "kube-apiserver"
 	KeyIstio                            = "istio-ingressgateway"
 	NamespaceIstioIngress               = "istio-ingress"
